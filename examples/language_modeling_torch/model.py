@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from mlcorekit.backend.torch_ import BlockWiseEmbedding
+from nncompress.backend.torch_ import BlockWiseEmbedding
 
 class RNNModel(nn.Module):
     """Container module with an encoder, a recurrent module, and a decoder."""

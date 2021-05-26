@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 def get_type(cls_name):
-    from mlcorekit.backend import torch_
+    from nncompress.backend import torch_
     if hasattr(torch_, cls_name):
         return getattr(torch_, cls_name)
     else:

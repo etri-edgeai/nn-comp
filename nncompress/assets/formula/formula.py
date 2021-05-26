@@ -4,7 +4,7 @@ from __future__ import print_function
 
 from abc import ABC, abstractmethod
 
-from mlcorekit import backend as M
+from nncompress import backend as M
 
 class Formula(ABC):
 

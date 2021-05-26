@@ -3,7 +3,7 @@ from __future__ import print_function
 
 import numpy as np
 
-from mlcorekit import backend as M
+from nncompress import backend as M
 
 def _magnitude_based_mask(w, ratio, mode):
     w = np.abs(w)

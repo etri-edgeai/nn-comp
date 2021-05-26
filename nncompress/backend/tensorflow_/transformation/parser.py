@@ -13,8 +13,8 @@ from tensorflow import keras
 from tensorflow.keras.layers import Lambda
 from orderedset import OrderedSet
 
-from mlcorekit.backend.tensorflow_.transformation.handler import get_handler
-from mlcorekit.backend.tensorflow_ import DifferentiableGate
+from nncompress.backend.tensorflow_.transformation.handler import get_handler
+from nncompress.backend.tensorflow_ import DifferentiableGate
 
 def serialize(layer):
     layer_dict = tf.keras.layers.serialize(layer)

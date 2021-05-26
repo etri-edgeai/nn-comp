@@ -6,7 +6,7 @@ from tensorly.decomposition import partial_tucker
 from scipy.sparse.linalg import svds
 import numpy as np
 
-from mlcorekit import backend as M
+from nncompress import backend as M
 
 def tucker(tensor, in_rank, out_rank):
     tl_tensor = tl.tensor(tensor)

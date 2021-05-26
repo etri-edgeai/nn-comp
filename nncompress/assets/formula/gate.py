@@ -4,8 +4,8 @@ from __future__ import print_function
 
 import numpy as np
 
-from mlcorekit.assets.formula.formula import Formula
-from mlcorekit import backend as M
+from nncompress.assets.formula.formula import Formula
+from nncompress import backend as M
 
 def b(x):
     # Assume that > operator must be supported in backends.

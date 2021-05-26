@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from mlcorekit.assets.formula.gate import DifferentiableGateFormula
+from nncompress.assets.formula.gate import DifferentiableGateFormula
 
 class DifferentiableGate(nn.Module, DifferentiableGateFormula):
     """DifferentiableGate Implementation

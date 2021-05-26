@@ -9,11 +9,11 @@ import json
 
 import tensorflow as tf
 
-from mlcorekit.compression.lowrank import decompose
-from mlcorekit.compression.pruning import prune, prune_filter
-from mlcorekit.algorithms.solver.simulated_annealing import SimulatedAnnealingSolver
-from mlcorekit.algorithms.solver.solver import State
-from mlcorekit import backend as M
+from nncompress.compression.lowrank import decompose
+from nncompress.compression.pruning import prune, prune_filter
+from nncompress.algorithms.solver.simulated_annealing import SimulatedAnnealingSolver
+from nncompress.algorithms.solver.solver import State
+from nncompress import backend as M
 
 def random_sample(model, search_space, nsteps, use_same_spec=False, filter_func=None):
     actions = []

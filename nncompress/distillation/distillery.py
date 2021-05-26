@@ -5,7 +5,7 @@ from __future__ import print_function
 import tensorflow as tf
 from tensorflow.keras.models import Model
 
-from mlcorekit import backend as M
+from nncompress import backend as M
 
 def make_teacher_output(name, t_idx=0, flow_idx=0, tensor_idx=0):
     return (t_idx, name, flow_idx, tensor_idx)

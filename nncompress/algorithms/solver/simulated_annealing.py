@@ -4,7 +4,7 @@ from __future__ import print_function
 import random
 import math
 
-from mlcorekit.algorithms.solver.solver import Solver
+from nncompress.algorithms.solver.solver import Solver
 
 INIT_TEMP = 1000000
 DELAY = 1

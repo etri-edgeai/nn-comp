@@ -10,7 +10,7 @@ import tensorflow as tf
 from tensorflow.keras import backend as K
 
 def get_type(cls_name):
-    from mlcorekit.backend import tensorflow_
+    from nncompress.backend import tensorflow_
     if hasattr(tensorflow_, cls_name):
         return getattr(tensorflow_, cls_name)
     else:
@@ -72,7 +72,7 @@ def copy_(model):
     return model_
 
 def prune_filter(model, domain, mode="channel", custom_objects=None):
-    from mlcorekit.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
+    from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
     domain = copy.deepcopy(domain)
     if mode == "channel": # it supports `channel_pruning` only now.
         parser = PruningNNParser(model, custom_objects)
@@ -83,7 +83,7 @@ def prune_filter(model, domain, mode="channel", custom_objects=None):
     return domain
 
 def prune(model, masking, mode="channel", custom_objects=None):
-    from mlcorekit.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
+    from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
     if mode == "channel":
         parser = PruningNNParser(model, custom_objects)
         parser.parse()
@@ -128,7 +128,7 @@ def prune(model, masking, mode="channel", custom_objects=None):
     return model, history_
 
 def decompose(model, targets, decomposed, custom_objects=None):
-    from mlcorekit.backend.tensorflow_.transformation.parser import NNParser
+    from nncompress.backend.tensorflow_.transformation.parser import NNParser
     parser = NNParser(model, custom_objects)
     parser.parse()
     replace_mappings = []

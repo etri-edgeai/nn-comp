@@ -13,9 +13,9 @@ from tensorflow import keras
 from tensorflow.keras.layers import Lambda
 from orderedset import OrderedSet
 
-from mlcorekit.backend.tensorflow_.transformation.handler import get_handler
-from mlcorekit.backend.tensorflow_.transformation.parser import NNParser, serialize
-from mlcorekit.backend.tensorflow_ import DifferentiableGate
+from nncompress.backend.tensorflow_.transformation.handler import get_handler
+from nncompress.backend.tensorflow_.transformation.parser import NNParser, serialize
+from nncompress.backend.tensorflow_ import DifferentiableGate
 
 class PruningNNParser(NNParser):
     """NNParser is a tool for enabling differentiable pruning.

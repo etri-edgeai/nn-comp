@@ -6,7 +6,7 @@ import tensorflow as tf
 from tensorflow.keras import layers
 from tensorflow.keras import backend as K
 
-from mlcorekit.assets.formula.gate import DifferentiableGateFormula
+from nncompress.assets.formula.gate import DifferentiableGateFormula
 
 class DifferentiableGate(layers.Layer, DifferentiableGateFormula):
 

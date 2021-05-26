@@ -150,8 +150,8 @@ if train:
     model.save(model_path)
     print('Saved trained model at %s ' % model_path)
 
-from mlcorekit.nncompress.projection import extract_sample_features
-from mlcorekit.nncompress.projection import least_square_projection
+from nncompress.run.projection import extract_sample_features
+from nncompress.run.projection import least_square_projection
 
 from cifar100_helper import CIFAR100Helper
 helper = CIFAR100Helper()
@@ -180,7 +180,7 @@ print('Test accuracy:', scores[1])
 """
 
 from cifar100_helper import CIFAR100Helper
-from mlcorekit.nncompress.nncompress import NNCompress
+from nncompress.run.nncompress import NNCompress
 
 helper = CIFAR100Helper()
 helper.setup(model)

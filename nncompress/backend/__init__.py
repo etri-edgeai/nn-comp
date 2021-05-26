@@ -8,16 +8,16 @@ import importlib
 # Default backend: tf.Keras
 _BACKEND = 'tensorflow'
 
-if 'MLCOREKIT_HOME' in os.environ:
-    _mlcorekit_dir = os.environ.get('MLCOREKIT_HOME')
+if 'NNCOMPRESS_HOME' in os.environ:
+    _nncompress_dir = os.environ.get('NNCOMPRESS_HOME')
 else:
-    _mlcorekit_base_dir = os.path.expanduser('~')
-    if not os.access(_mlcorekit_base_dir, os.W_OK):
-        _mlcorekit_base_dir = '/tmp'
-    _mlcorekit_dir = os.path.join(_mlcorekit_base_dir, '.mlck')
+    _nncompress_base_dir = os.path.expanduser('~')
+    if not os.access(_nncompress_base_dir, os.W_OK):
+        _nncompress_base_dir = '/tmp'
+    _nncompress_dir = os.path.join(_nncompress_base_dir, '.nncps')
 
-# Attempt to read mlcorekit config file.
-_config_path = os.path.expanduser(os.path.join(_mlcorekit_dir, 'mlck.json'))
+# Attempt to read nncompress config file.
+_config_path = os.path.expanduser(os.path.join(_nncompress_dir, 'mlck.json'))
 if os.path.exists(_config_path):
     try:
         with open(_config_path) as f:
@@ -27,9 +27,9 @@ if os.path.exists(_config_path):
     _BACKEND = _config.get('backend', _BACKEND)
 
 # Save config file, if possible.
-if not os.path.exists(_mlcorekit_dir):
+if not os.path.exists(_nncompress_dir):
     try:
-        os.makedirs(_mlcorekit_dir)
+        os.makedirs(_nncompress_dir)
     except OSError:
         # Except permission denied and potential race conditions
         # in multi-threaded environments.
@@ -46,9 +46,9 @@ if not os.path.exists(_config_path):
         # Except permission denied.
         pass
 
-# Set backend based on MLCOREKIT_BACKEND flag, if applicable.
-if 'MLCOREKIT_BACKEND' in os.environ:
-    _backend = os.environ['MLCOREKIT_BACKEND']
+# Set backend based on NNCOMPRESS_BACKEND flag, if applicable.
+if 'NNCOMPRESS_BACKEND' in os.environ:
+    _backend = os.environ['NNCOMPRESS_BACKEND']
     if _backend:
         _BACKEND = _backend
 
@@ -71,7 +71,7 @@ def backend():
 
     # Example
     ```python
-        >>> mlcorekit.backend.backend()
+        >>> nncompress.backend.backend()
         'tensorflow'
     ```
     """

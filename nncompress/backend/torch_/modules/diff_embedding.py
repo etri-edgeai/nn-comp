@@ -6,8 +6,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from mlcorekit.assets.formula.gate import b, gate_func
-from mlcorekit import backend as M
+from nncompress.assets.formula.gate import b, gate_func
+from nncompress import backend as M
 
 def get_mask(idx_array, val, L=10e8, grad_shape_func=None):
     if callable(grad_shape_func):
