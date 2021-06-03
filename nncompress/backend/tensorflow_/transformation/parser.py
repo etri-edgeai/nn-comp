@@ -302,6 +302,9 @@ class NNParser(object):
                 for callback in node_callbacks:
                     callback(curr, level)
 
+            if stopping_condition is not None and stopping_condition((curr, level), is_edge=False):
+                break
+
             neighbors = self._graph.in_edges(curr, data=True) if inbound else self._graph.out_edges(curr, data=True)
             for e in neighbors:
                 src, dst, level_change, inbound_idx = e[0], e[1], e[2]["level_change"], e[2]["inbound_idx"]
@@ -309,7 +312,7 @@ class NNParser(object):
                     for callback in neighbor_callbacks:
                         callback(e)
 
-                if stopping_condition is not None and stopping_condition(e):
+                if stopping_condition is not None and stopping_condition(e, is_edge=True):
                     break
 
                 if inbound:

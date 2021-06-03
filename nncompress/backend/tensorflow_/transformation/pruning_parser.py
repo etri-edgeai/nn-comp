@@ -102,14 +102,39 @@ class PruningNNParser(NNParser):
             A set of last transformer names.
         """
         last = set()
-        def stop_(e):
-            src = self._graph.nodes.data()[e[0]]
-            if get_handler(src["layer_dict"]["class_name"]).is_transformer(e[2]["tensor"]):
-                last.add(e[0])
-                return True
+        def stop_(e, is_edge):
+            if is_edge:
+                src = self._graph.nodes.data()[e[0]]
+                if get_handler(src["layer_dict"]["class_name"]).is_transformer(e[2]["tensor"]):
+                    last.add(e[0])
+                    return True
+            else:
+                curr, level = e
+                curr_data = self._graph.nodes.data()[curr]
+                if get_handler(curr_data["layer_dict"]["class_name"]).is_transformer(0):
+                    last.add(curr)
+                    return True
             return False
         self.traverse(stopping_condition=stop_, inbound=True)
         return last
+
+    def get_sharing_layers(self, target):
+        """This function returns the name of layers which are included in the same sharing group of `target`.
+
+        # Arguments.
+            target: a str, the name of a query layer.
+
+        # Returns.
+            a list of str, the name of sharing group layers.
+
+        """
+        target_group = None
+        for g in self._sharing_groups:
+            if target in g:
+                target_group = g
+        if target_group is None:
+            raise ValueError("No sharing group for %s" % target)
+        return [ copy.deepcopy(i) for i in target_group ]
             
     def _reroute(self, at, target, layers_dict):
         """

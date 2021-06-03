@@ -82,6 +82,12 @@ def prune_filter(model, domain, mode="channel", custom_objects=None):
             domain.remove(a)
     return domain
 
+def get_sharing_layers(model, target, custom_objects=None):
+    from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
+    parser = PruningNNParser(model, custom_objects)
+    parser.parse()
+    return parser.get_sharing_layers(target)
+
 def prune(model, masking, mode="channel", custom_objects=None):
     from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
     if mode == "channel":
