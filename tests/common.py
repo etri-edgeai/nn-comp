@@ -18,7 +18,8 @@ MODELS = {
     "seq":None,
     "resnet":None,
     "densenet":None,
-    "mobilenet":None
+    "mobilenet":None,
+    "json":None
 }
 helper = CIFAR100Helper()
 
@@ -72,6 +73,9 @@ def request_model(model_key):
                 model = tf.keras.applications.DenseNet121(include_top=True, input_shape=(32, 32, 3), weights=None, pooling=None, classes=100)
             elif model_key == "mobilenetv2":
                 model = tf.keras.applications.MobileNetV2(include_top=True, input_shape=(32, 32, 3), weights=None, pooling=None, classes=100)
+            elif model_key == "json": # ResNet50 json TF 2.4.1
+                with open("tests/model.json", "r") as json_file:
+                    model = keras.models.model_from_json(json_file.read())
             elif model_key == "seq":
                 model = get_seq_model()
             else:

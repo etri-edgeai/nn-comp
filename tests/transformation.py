@@ -26,11 +26,12 @@ def compute_nodes_edges(model):
 class TransformationTest(TestCase):
 
     def test_gate_injection_01(self):
-        resnet = common.request_model("resnet")
+        resnet = common.request_model("json")
         parser = PruningNNParser(resnet)
         parser.parse()
 
         model = parser.inject()
+        keras.utils.plot_model(model, to_file="model.png")
         n, m = compute_nodes_edges(model)
-        self.assertEqual(n, 311)
-        self.assertEqual(m, 388)
+        self.assertEqual(n, 320)
+        self.assertEqual(m, 404)
