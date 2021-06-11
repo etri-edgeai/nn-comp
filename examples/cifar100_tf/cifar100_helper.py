@@ -11,7 +11,7 @@ from nncompress.backend.tensorflow_.utils import count_all_params
 
 class CIFAR100Helper(Helper):
 
-    def __init__(self):
+    def __init__(self, use_cutmix=False):
 
         self.batch_size = 32
         self.num_classes = 100
@@ -28,6 +28,10 @@ class CIFAR100Helper(Helper):
         x_test = x_test.astype('float32')
         x_train /= 255
         x_test /= 255
+
+        x_train_mean = np.mean(x_train, axis=0)
+        x_train -= x_train_mean
+        x_test -= x_train_mean
 
         datagen = ImageDataGenerator(
             featurewise_center=False,  # set input mean to 0 over the dataset
@@ -63,24 +67,34 @@ class CIFAR100Helper(Helper):
         datagen.fit(x_train)
 
         self.datagen = datagen
-        self.augmentation = cutmix
+        self.augmentation = cutmix if use_cutmix else None
         self.training_data = (x_train, y_train)
         self.test_data = (x_test, y_test)
 
     def setup(self, model):
         self._original_params = count_all_params(model)
         
-    def train(self, model, callbacks=None):
+    def train(self, model, epochs=-1, callbacks=None):
         """Train the input model.
 
         """
+        if epochs == -1:
+            epochs = self.epochs
         model.compile(optimizer=self.optimizer, loss="categorical_crossentropy", metrics=["accuracy"])
-        model.fit(AugmentingGenerator(
-            self.datagen.flow(*self.training_data, batch_size=self.batch_size)),
-            epochs=self.epochs,
-            validation_data=self.test_data,
-            callbacks=callbacks,
-            workers=1)
+        if self.data_augmentation:
+            model.fit(AugmentingGenerator(
+                self.datagen.flow(*self.training_data, batch_size=self.batch_size), self.augmentation),
+                epochs=epochs,
+                validation_data=self.test_data,
+                callbacks=callbacks,
+                workers=1)
+        else:
+            model.fit(*self.training_data,
+                  batch_size=self.batch_size,
+                  epochs=epochs,
+                  validation_data=*self.test_data,
+                  shuffle=True,
+                  callbacks=callbacks)
 
     def evaluate(self, model):
         """Evaluate the input model in terms of accuracy.
