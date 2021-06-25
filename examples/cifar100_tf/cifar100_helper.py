@@ -1,9 +1,14 @@
 from __future__ import print_function
 
 import tensorflow as tf
+import numpy as np
 from tensorflow import keras
+from tensorflow.keras.datasets import cifar10
 from tensorflow.keras.datasets import cifar100
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.callbacks import ModelCheckpoint, LearningRateScheduler
+from tensorflow.keras.callbacks import ReduceLROnPlateau
+from tensorflow.keras.optimizers import Adam
 
 from nncompress.run.helper import Helper
 from nncompress.backend.tensorflow_.data.augmenting_generator import AugmentingGenerator, cutmix
@@ -11,16 +16,21 @@ from nncompress.backend.tensorflow_.utils import count_all_params
 
 class CIFAR100Helper(Helper):
 
-    def __init__(self, use_cutmix=False):
+    def __init__(self, num_classes=100, use_cutmix=False):
 
         self.batch_size = 32
-        self.num_classes = 100
+        self.num_classes = num_classes
         self.epochs = 10
         self.data_augmentation = True
-        self.optimizer = tf.keras.optimizers.SGD(learning_rate=0.001, momentum=0.0005, nesterov=True)
 
         # Load data
-        (x_train, y_train), (x_test, y_test) = cifar100.load_data()
+        if num_classes == 10:
+            (x_train, y_train), (x_test, y_test) = cifar10.load_data()
+        elif num_classes == 100:
+            (x_train, y_train), (x_test, y_test) = cifar100.load_data()
+        else:
+            raise ValueError("num_classes invalid")
+
         y_train = keras.utils.to_categorical(y_train, self.num_classes)
         y_test = keras.utils.to_categorical(y_test, self.num_classes)
 
@@ -74,13 +84,67 @@ class CIFAR100Helper(Helper):
     def setup(self, model):
         self._original_params = count_all_params(model)
         
-    def train(self, model, epochs=-1, callbacks=None):
+    def train(self, model, tag="none", init_lr=1e-3, epochs=-1, save_ckpt=False, callbacks=None):
         """Train the input model.
 
         """
         if epochs == -1:
             epochs = self.epochs
-        model.compile(optimizer=self.optimizer, loss="categorical_crossentropy", metrics=["accuracy"])
+
+        def lr_schedule(epoch):
+            """Learning Rate Schedule
+
+            Learning rate is scheduled to be reduced after 80, 120, 160, 180 epochs.
+            Called automatically every epoch as part of callbacks during training.
+
+            # Arguments
+                epoch (int): The number of epochs
+
+            # Returns
+                lr (float32): learning rate
+            """
+            lr = init_lr
+            if epoch > 180:
+                lr *= 0.5e-3
+            elif epoch > 160:
+                lr *= 1e-3
+            elif epoch > 120:
+                lr *= 1e-2
+            elif epoch > 80:
+                lr *= 1e-1
+            print('Learning rate: ', lr)
+            return lr
+
+        model.compile(loss='categorical_crossentropy',
+                      optimizer=Adam(lr=lr_schedule(0)),
+                      metrics=['accuracy'])
+
+        if save_ckpt:
+            # Prepare model model saving directory.
+            save_dir = os.path.join(os.getcwd(), 'saved_models_compressed')
+            model_name = '%s.{epoch:03d}.h5' % tag
+            if not os.path.isdir(save_dir):
+                os.makedirs(save_dir)
+            filepath = os.path.join(save_dir, model_name)
+
+            # Prepare callbacks for model saving and for learning rate adjustment.
+            checkpoint = ModelCheckpoint(filepath=filepath,
+                                         monitor='val_accuracy',
+                                         verbose=1,
+                                         save_best_only=True)
+ 
+        lr_scheduler = LearningRateScheduler(lr_schedule)
+
+        lr_reducer = ReduceLROnPlateau(factor=np.sqrt(0.1),
+                                       cooldown=0,
+                                       patience=5,
+                                       min_lr=0.5e-6)
+
+        if save_ckpt:
+            callbacks = [checkpoint, lr_reducer, lr_scheduler]
+        else:
+            callbacks = [lr_reducer, lr_scheduler]
+
         if self.data_augmentation:
             model.fit(AugmentingGenerator(
                 self.datagen.flow(*self.training_data, batch_size=self.batch_size), self.augmentation),
@@ -92,7 +156,7 @@ class CIFAR100Helper(Helper):
             model.fit(*self.training_data,
                   batch_size=self.batch_size,
                   epochs=epochs,
-                  validation_data=*self.test_data,
+                  validation_data=self.test_data,
                   shuffle=True,
                   callbacks=callbacks)
 
@@ -100,7 +164,7 @@ class CIFAR100Helper(Helper):
         """Evaluate the input model in terms of accuracy.
 
         """
-        model.compile(optimizer=self.optimizer, loss="categorical_crossentropy", metrics=["accuracy"])
+        model.compile(loss="categorical_crossentropy", metrics=["accuracy"])
         return model.evaluate(*self.test_data, verbose=1)[1]
 
     def sample_training_data(self, nsamples):
