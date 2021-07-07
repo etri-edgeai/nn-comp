@@ -6,6 +6,7 @@ import random
 import copy
 import os
 import json
+import shutil
 
 import tensorflow as tf
 
@@ -129,7 +130,7 @@ class CompressionState(State):
 
 class NNCompress(object):
 
-    def __init__(self, model, helper, dir_=os.getcwd(), max_iters=1000, h=3, nsteps=3, search_space=None, compression_callbacks=None, finetune_callback=None, custom_objects=None, solver_kwargs=None, filter_func=None):
+    def __init__(self, model, helper, dir_=os.getcwd(), max_iters=1000, h=3, nsteps=3, search_space=None, compression_callbacks=None, finetune_callback=None, custom_objects=None, solver_kwargs=None, filter_func=None, overwrite=False):
         self._model = model # original model, which will not be modified.
         self._masks = {} # to mask gradients
         self._states = []
@@ -164,9 +165,13 @@ class NNCompress(object):
         if not os.path.exists(dir_):
             os.mkdir(dir_)
         else:
-            print("%s does exist, so will be terminated..." % dir_)
-            import sys
-            sys.exit(1)
+            if overwrite:
+                shutil.rmtree(dir_)
+                os.mkdir(dir_)
+            else:
+                print("%s does exist, so will be terminated..." % dir_)
+                import sys
+                sys.exit(1)
         self._dir_ = dir_
 
     @property
