@@ -118,6 +118,18 @@ class PruningNNParser(NNParser):
         self.traverse(stopping_condition=stop_, inbound=True)
         return last
 
+    def get_sharing_groups(self):
+        """This function returns all the sharing groups in the networks.
+
+        # Returns.
+            a list of lists each of which is a sharing group.
+
+        """
+        ret = []
+        for g in self._sharing_groups:
+            ret.append(copy.deepcopy(g))
+        return ret
+
     def get_sharing_layers(self, target):
         """This function returns the name of layers which are included in the same sharing group of `target`.
 
@@ -383,8 +395,8 @@ if __name__ == "__main__":
     from tensorflow.keras.datasets import cifar10
     from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
-    model = tf.keras.applications.ResNet50(include_top=False, weights=None, pooling=None, classes=10)
-    #model = tf.keras.applications.DenseNet121(include_top=False, weights=None, pooling=None, classes=10)
+    #model = tf.keras.applications.ResNet50(include_top=False, weights=None, pooling=None, classes=10)
+    model = tf.keras.applications.DenseNet121(include_top=False, weights=None, pooling=None, classes=10)
 
     tf.keras.utils.plot_model(model, to_file="original.png", show_shapes=True)
 

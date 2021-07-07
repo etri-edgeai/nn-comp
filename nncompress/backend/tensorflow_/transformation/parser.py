@@ -80,6 +80,18 @@ class NNParser(object):
         assert name in self._layers_dict
         return copy.deepcopy(self._layers_dict[name])
 
+    def get_nodes(self, ids):
+        """Return the nodes upon `ids`
+
+        # Arguments.
+            ids: a list of str, the ids to retrieve
+
+        # Returns.
+            a list of the node instances in the graph
+
+        """
+        return [(id_, self._graph.nodes[id_]) for id_ in ids]
+
     def restore_id(self, prefix):
         """This function is used to restore the id counter of `get_id`.
         Suppose that you claim some identifier and it is turned out to be useless.
@@ -351,6 +363,16 @@ class NNParser(object):
                     dst = layer["config"]["name"]
                     self._graph.add_edge(
                         src, dst, level_change=(inbound[1], flow_idx), tensor=inbound[2], inbound_idx=in_idx)
+
+    def get_topology(self):
+        """Return a networkx graph having the topology of the graph.
+
+        # Returns.
+            A graph (networkx)
+
+        """
+        return copy.deepcopy(self._graph)
+
 
 if __name__ == "__main__":
 

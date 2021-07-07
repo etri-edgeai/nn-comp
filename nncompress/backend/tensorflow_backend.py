@@ -86,7 +86,31 @@ def get_sharing_layers(model, target, custom_objects=None):
     from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
     parser = PruningNNParser(model, custom_objects)
     parser.parse()
-    return parser.get_sharing_layers(target)
+
+    if type(target) == list:
+        ret = {}
+        for t in target:
+            try:
+                ret[t] = parser.get_sharing_layers(t)
+            except ValueError:
+                ret[t] = None
+        return ret
+    else:
+        return parser.get_sharing_layers(target)
+
+def get_sharing_groups(model, custom_objects=None):
+    from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
+    parser = PruningNNParser(model, custom_objects)
+    parser.parse()
+    model_ = parser.inject()
+    tf.keras.utils.plot_model(model_, to_file="gmodel.png", show_shapes=True)
+    return parser.get_sharing_groups()
+
+def get_topology(model, custom_objects=None):
+    from nncompress.backend.tensorflow_.transformation.parser import NNParser
+    parser = NNParser(model, custom_objects)
+    parser.parse()
+    return parser.get_topology()
 
 def prune(model, masking, mode="channel", custom_objects=None):
     from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
@@ -153,6 +177,7 @@ def decompose(model, targets, decomposed, custom_objects=None):
                 r["config"]["filters"] = d[idx].shape[3]
                 if idx != 1:
                     r["config"]["kernel_size"] = [1, 1]
+                    r["config"]["strides"] = [1, 1]
                 if idx != 2:
                     r["config"]["use_bias"] = False
 
