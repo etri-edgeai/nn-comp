@@ -4,10 +4,10 @@ from __future__ import print_function
 import numpy as np
 
 from nncompress import backend as M
-from nncompress.run.projection import extract_sample_features
-from nncompress.run.projection import least_square_projection
+from nncompress.search.projection import extract_sample_features
+from nncompress.search.projection import least_square_projection
 
-def cali(model, compressed, masking, helper, nsamples=100, feat_data=None):
+def cali(model, compressed, masking, handler, nsamples=100, feat_data=None):
     merged_masking = {}
     for layer_name in masking:
         assert masking[layer_name] is not None
@@ -45,7 +45,7 @@ def cali(model, compressed, masking, helper, nsamples=100, feat_data=None):
 
     ## apply projection
     if feat_data is None:
-        temp_data = extract_sample_features(model, layers_, helper, nsamples=nsamples)
+        temp_data = extract_sample_features(model, layers_, handler, nsamples=nsamples)
         feat_data = {}
         for layer_name, feat_data_ in temp_data.items():
             feat_data[layer_name] = feat_data_
@@ -133,7 +133,7 @@ def weighted_group_pruning_mask(model, targets, ratio):
 def prune_filter(model, domain, targets, mode="channel", method="magnitude", sample_inputs=None, custom_objects=None):
     return M.prune_filter(model, domain, mode, custom_objects)  
  
-def prune(model, targets, mode="channel", method="magnitude", sample_inputs=None, custom_objects=None, helper=None, calibration=False, nsamples=100, feat_data=None):
+def prune(model, targets, mode="channel", method="magnitude", sample_inputs=None, custom_objects=None, handler=None, calibration=False, nsamples=100, feat_data=None):
     """Compress a model written in tf.Keras. or PyTorch.
 
     For PyTorch, it only supports weight pruning.
@@ -191,6 +191,6 @@ def prune(model, targets, mode="channel", method="magnitude", sample_inputs=None
     model_, history = M.prune(model, masking, mode=mode, custom_objects=custom_objects)
 
     if calibration:
-        assert helper is not None
-        cali(model, model_, history, helper, nsamples=nsamples, feat_data=feat_data)
+        assert handler is not None
+        cali(model, model_, history, handler, nsamples=nsamples, feat_data=feat_data)
     return model_, replace_mappings, history
