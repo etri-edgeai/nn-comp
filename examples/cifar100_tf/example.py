@@ -11,9 +11,9 @@ from tensorflow.keras.datasets import cifar100
 
 from cifar100_handler import CIFAR100Handler
 from nncompress.compression.pruning import prune, prune_filter
-from nncompress.run.nncompress import NNCompress
-from nncompress.run.projection import extract_sample_features
-from nncompress.run.projection import least_square_projection
+from nncompress.search.nncompress import NNCompress
+from nncompress.search.projection import extract_sample_features
+from nncompress.search.projection import least_square_projection
 from nncompress.backend.tensorflow_.transformation.parser import NNParser
 from nncompress import backend as M
 

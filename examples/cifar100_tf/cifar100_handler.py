@@ -10,7 +10,7 @@ from tensorflow.keras.callbacks import ModelCheckpoint, LearningRateScheduler
 from tensorflow.keras.callbacks import ReduceLROnPlateau
 from tensorflow.keras.optimizers import Adam
 
-from nncompress.search.handler import TaskHandler
+from nncompress.handler import TaskHandler
 from nncompress.backend.tensorflow_.data.augmenting_generator import AugmentingGenerator, cutmix
 from nncompress.backend.tensorflow_.utils import count_all_params
 
