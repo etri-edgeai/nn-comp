@@ -4,14 +4,14 @@ import tensorflow as tf
 from sklearn.linear_model import LinearRegression
 import numpy as np
 
-def extract_sample_features(model, layers, helper, nsamples=3, npoints=10):
+def extract_sample_features(model, layers, handler, nsamples=3, npoints=10):
     tensors = []
     for idx, layer in enumerate(layers):
         tensors.append(layer.inbound_nodes[0].input_tensors)
         tensors.append(layer.output)
     model_ = tf.keras.Model(inputs=model.inputs,
                         outputs=tensors)
-    sampled_data = helper.sample_training_data(nsamples)
+    sampled_data = handler.sample_training_data(nsamples)
     ret = {}
     for data in sampled_data:
         X, Y = data
@@ -33,8 +33,8 @@ def extract_sample_features(model, layers, helper, nsamples=3, npoints=10):
 
                 assert len(random_X) == len(random_Y)
                 npoints_ = len(random_X)
-                sampled_input = layer_input[:, random_Y, random_X, :].reshape(helper.batch_size * npoints_, -1)
-                sampled_output = layer_output[:, random_Y, random_X, :].reshape(helper.batch_size * npoints_, -1)
+                sampled_input = layer_input[:, random_Y, random_X, :].reshape(handler.batch_size * npoints_, -1)
+                sampled_output = layer_output[:, random_Y, random_X, :].reshape(handler.batch_size * npoints_, -1)
             else:
                 sampled_input = layer_input
                 sampled_output = layer_output

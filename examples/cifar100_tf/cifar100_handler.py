@@ -10,11 +10,11 @@ from tensorflow.keras.callbacks import ModelCheckpoint, LearningRateScheduler
 from tensorflow.keras.callbacks import ReduceLROnPlateau
 from tensorflow.keras.optimizers import Adam
 
-from nncompress.run.helper import Helper
+from nncompress.search.handler import TaskHandler
 from nncompress.backend.tensorflow_.data.augmenting_generator import AugmentingGenerator, cutmix
 from nncompress.backend.tensorflow_.utils import count_all_params
 
-class CIFAR100Helper(Helper):
+class CIFAR100Handler(TaskHandler):
 
     def __init__(self, num_classes=100, use_cutmix=False):
 

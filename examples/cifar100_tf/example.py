@@ -9,7 +9,7 @@ from tensorflow import keras
 from tensorflow.keras.datasets import cifar10
 from tensorflow.keras.datasets import cifar100
 
-from cifar100_helper import CIFAR100Helper
+from cifar100_handler import CIFAR100Handler
 from nncompress.compression.pruning import prune, prune_filter
 from nncompress.run.nncompress import NNCompress
 from nncompress.run.projection import extract_sample_features
@@ -54,7 +54,7 @@ def run():
     model_ = "resnet20"
     model = load_model(model_, "cifar100")
 
-    handler = CIFAR100Helper(num_classes)
+    handler = CIFAR100Handler(num_classes)
     handler.setup(model)
 
     scores = handler.evaluate(model)
@@ -103,7 +103,7 @@ def run():
         best_ = -1
         worst_ = -1
         for idx, target in enumerate(g_):
-            model_, replace_mappings, history = prune(model, [(target[0], comp_ratio)], mode="channel", method="magnitude", helper=handler, calibration=True, nsamples=100, feat_data=feat_data)
+            model_, replace_mappings, history = prune(model, [(target[0], comp_ratio)], mode="channel", method="magnitude", handler=handler, calibration=True, nsamples=100, feat_data=feat_data)
             model_.compile(loss='categorical_crossentropy',
                           metrics=['accuracy'])
             scores = handler.evaluate(model_)
@@ -116,7 +116,7 @@ def run():
                 worst_idx[gidx] = idx
 
         print("group_sum")
-        model_, replace_mappings, history = prune(model, [(target[0], comp_ratio)], mode="channel", method="group_sum", helper=handler, calibration=True, nsamples=100, feat_data=feat_data)
+        model_, replace_mappings, history = prune(model, [(target[0], comp_ratio)], mode="channel", method="group_sum", handler=handler, calibration=True, nsamples=100, feat_data=feat_data)
 
         model_.compile(loss='categorical_crossentropy',
                       metrics=['accuracy'])
@@ -124,7 +124,7 @@ def run():
         print(scores)
 
         print("w_group_sum")
-        model_, replace_mappings, history = prune(model, [(target[0], comp_ratio)], mode="channel", method="w_group_sum", helper=handler, calibration=True, nsamples=100, feat_data=feat_data)
+        model_, replace_mappings, history = prune(model, [(target[0], comp_ratio)], mode="channel", method="w_group_sum", handler=handler, calibration=True, nsamples=100, feat_data=feat_data)
 
         model_.compile(loss='categorical_crossentropy',
                       metrics=['accuracy'])
@@ -132,7 +132,7 @@ def run():
         print(scores)
 
         print("random")
-        model_, replace_mappings, history = prune(model, [(target[0], comp_ratio)], mode="channel", method="random", helper=handler, calibration=True, nsamples=100, feat_data=feat_data)
+        model_, replace_mappings, history = prune(model, [(target[0], comp_ratio)], mode="channel", method="random", handler=handler, calibration=True, nsamples=100, feat_data=feat_data)
 
         model_.compile(loss='categorical_crossentropy',
                       metrics=['accuracy'])
@@ -151,7 +151,7 @@ def run():
         g_ = sorted(g_, key=lambda x: x[1])
 
         target = g_[best_idx[gidx]]
-        model_, replace_mappings, history = prune(model_, [(target[0], comp_ratio)], mode="channel", method="magnitude", helper=handler, calibration=True, nsamples=100, feat_data=feat_data)
+        model_, replace_mappings, history = prune(model_, [(target[0], comp_ratio)], mode="channel", method="magnitude", handler=handler, calibration=True, nsamples=100, feat_data=feat_data)
 
         model_.compile(loss='categorical_crossentropy',
                       metrics=['accuracy'])
@@ -168,7 +168,7 @@ def run():
         g_ = sorted(g_, key=lambda x: x[1])
 
         target = g_[worst_idx[gidx]]
-        model_, replace_mappings, history = prune(model_, [(target[0], comp_ratio)], mode="channel", method="magnitude", helper=handler, calibration=True, nsamples=100, feat_data=feat_data)
+        model_, replace_mappings, history = prune(model_, [(target[0], comp_ratio)], mode="channel", method="magnitude", handler=handler, calibration=True, nsamples=100, feat_data=feat_data)
 
         model_.compile(loss='categorical_crossentropy',
                       metrics=['accuracy'])
@@ -184,7 +184,7 @@ def run():
         g_ = [(i, torder[i]) for i in g]
         g_ = sorted(g_, key=lambda x: x[1])
 
-        model_, replace_mappings, history = prune(model_, [(g_[0][0], comp_ratio)], mode="channel", method="group_sum", helper=handler, calibration=True, nsamples=100, feat_data=feat_data)
+        model_, replace_mappings, history = prune(model_, [(g_[0][0], comp_ratio)], mode="channel", method="group_sum", handler=handler, calibration=True, nsamples=100, feat_data=feat_data)
 
         model_.compile(loss='categorical_crossentropy',
                       metrics=['accuracy'])
@@ -202,7 +202,7 @@ def run():
         g_ = [(i, torder[i]) for i in g]
         g_ = sorted(g_, key=lambda x: x[1])
 
-        model_, replace_mappings, history = prune(model_, [(g_[0][0], comp_ratio)], mode="channel", method="w_group_sum", helper=handler, calibration=True, nsamples=100, feat_data=feat_data)
+        model_, replace_mappings, history = prune(model_, [(g_[0][0], comp_ratio)], mode="channel", method="w_group_sum", handler=handler, calibration=True, nsamples=100, feat_data=feat_data)
 
         model_.compile(loss='categorical_crossentropy',
                       metrics=['accuracy'])
@@ -218,7 +218,7 @@ def run():
         g_ = [(i, torder[i]) for i in g]
         g_ = sorted(g_, key=lambda x: x[1])
 
-        model_, replace_mappings, history = prune(model_, [(g_[0][0], comp_ratio)], mode="channel", method="random", helper=handler, calibration=True, nsamples=100, feat_data=feat_data)
+        model_, replace_mappings, history = prune(model_, [(g_[0][0], comp_ratio)], mode="channel", method="random", handler=handler, calibration=True, nsamples=100, feat_data=feat_data)
 
         model_.compile(loss='categorical_crossentropy',
                       metrics=['accuracy'])

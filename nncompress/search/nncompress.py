@@ -130,12 +130,12 @@ class CompressionState(State):
 
 class NNCompress(object):
 
-    def __init__(self, model, helper, dir_=os.getcwd(), max_iters=1000, h=3, nsteps=3, search_space=None, compression_callbacks=None, finetune_callback=None, custom_objects=None, solver_kwargs=None, filter_func=None, overwrite=False):
+    def __init__(self, model, handler, dir_=os.getcwd(), max_iters=1000, h=3, nsteps=3, search_space=None, compression_callbacks=None, finetune_callback=None, custom_objects=None, solver_kwargs=None, filter_func=None, overwrite=False):
         self._model = model # original model, which will not be modified.
         self._masks = {} # to mask gradients
         self._states = []
         self._max_iters = max_iters
-        self.helper = helper
+        self.handler = handler
         self.h = h
         self.nsteps = nsteps
         self._id_cnt = {"state":-1}
@@ -198,7 +198,7 @@ class NNCompress(object):
                         score(state_)
                     max_score = max(max_score, state_.score)
                 if self.last_score != -1 and max_score / self.last_score < 1.05:
-                    self.helper.train(state.model)
+                    self.handler.train(state.model)
                     max_score = score(state, force=True)
                 self.last_score = max_score 
                 self.history.clear()
@@ -218,7 +218,7 @@ class NNCompress(object):
 
         def score(state, force=False):
             if state.score is None or force:
-                score_ = self.helper.score(state.model)
+                score_ = self.handler.score(state.model)
                 state._score =  score_
             else:
                 score_ = state.score

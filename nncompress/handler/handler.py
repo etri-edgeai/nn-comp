@@ -3,7 +3,7 @@ from __future__ import print_function
 
 from abc import ABC, abstractmethod
 
-class Helper(ABC):
+class TaskHandler(ABC):
 
     @abstractmethod
     def setup(self, model):
