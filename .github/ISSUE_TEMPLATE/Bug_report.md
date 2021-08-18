@@ -6,8 +6,6 @@ about: Create a report to help us improve
 
 Having problems with a source code of a github repository?
 
-Having problems with the CI bot that controls the build process?
-
 Good to go? Then please remove these lines above, including this one, and help us understand your issue by answering the following:
 
 # Issue Description
@@ -28,4 +26,4 @@ How to Reproduce
 Further Information
 ===============
 * A link to an output result showing the issue
-* Exact OS version
+* Exact TensorFlow/PyTorch version
