@@ -14,7 +14,6 @@ from tensorflow.keras.layers import Lambda
 from orderedset import OrderedSet
 
 from nncompress.backend.tensorflow_.transformation.handler import get_handler
-from nncompress.backend.tensorflow_ import DifferentiableGate
 
 def serialize(layer):
     layer_dict = tf.keras.layers.serialize(layer)
@@ -47,7 +46,16 @@ class NNParser(object):
     
     """
 
-    def __init__(self, model, custom_objects=None):
+    def __init__(self, model, basestr="", custom_objects=None):
+
+        if type(model) == keras.Sequential:
+            input_layer = keras.layers.Input(batch_shape=model.layers[0].input_shape, name="seq_input")
+            prev_layer = input_layer
+            for layer in model.layers:
+                layer._inbound_nodes = []
+                prev_layer = layer(prev_layer)
+            model = keras.models.Model([input_layer], [prev_layer])
+
         self._model = model
         self._custom_objects = custom_objects or {}
 
@@ -56,6 +64,7 @@ class NNParser(object):
         self._layers_dict = None
 
         self._id_cnt = {}
+        self._basestr = basestr
 
     def get_id(self, prefix):
         """This function gives an identifier for a prefix.
@@ -72,9 +81,9 @@ class NNParser(object):
             self._id_cnt[prefix] += 1
 
         if self._id_cnt[prefix] == 0:
-            return prefix
+            return self._basestr + prefix
         else:
-            return prefix + "_" + str(self._id_cnt[prefix])
+            return self._basestr + prefix + "_" + str(self._id_cnt[prefix])
 
     def get_layer_dict(self, name):
         assert name in self._layers_dict
@@ -304,7 +313,7 @@ class NNParser(object):
                     [0 for _ in range(len(flow))]
                     for flow in n[1]["layer_dict"]["inbound_nodes"]
                 ]
-                for n in self._graph.nodes(data=True) 
+                for n in self._graph.nodes(data=True) if "inbound_nodes" in n[1]["layer_dict"]
             }
         while len(stk) > 0:
             curr, level = stk.pop()
@@ -354,9 +363,15 @@ class NNParser(object):
 
         # Load nodes and edges onto an internal graph defined by networkx.
         for layer in layers:            
-            self._graph.add_node(layer["config"]["name"], layer_dict=layer, nlevel=len(layer["inbound_nodes"]))
+            if "inbound_nodes" not in layer: # InputLayer
+                self._graph.add_node(layer["config"]["name"], layer_dict=layer, nlevel=0)
+            else:
+                self._graph.add_node(layer["config"]["name"], layer_dict=layer, nlevel=len(layer["inbound_nodes"]))
 
         for layer in layers:
+            if "inbound_nodes" not in layer: # InputLayer
+                continue
+
             for flow_idx, flow in enumerate(layer["inbound_nodes"]):
                 for in_idx, inbound in enumerate(flow):
                     src = inbound[0]

@@ -55,3 +55,19 @@ class DifferentiableGateFormula(Formula):
 
     def get_sparsity_loss(self):
         return self.reg_weight * M.norm(self.sparsity - self.get_sparsity(True), 2)
+
+
+class SimplePruningGateFormula(Formula):
+
+    def __init__(self):
+        super(PruningGateFormula, self).__init__()
+
+    def compute(self, input):
+        return M.cmul(input, self.binary_selection())
+
+    def binary_selection(self):
+        return self.gates # gates consists of ones or zeros.
+
+    def get_sparsity(self):
+        selection = self.binary_selection()
+        return 1.0 - M.sum(selection) / self.gates.shape[0]
