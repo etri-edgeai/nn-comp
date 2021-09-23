@@ -42,11 +42,15 @@ class PruningNNParser(NNParser):
     
     """
 
-    def __init__(self, model, custom_objects=None):
-        super(PruningNNParser, self).__init__(model, custom_objects)
+    def __init__(self, model, basestr="", custom_objects=None, gate_class=None):
+        super(PruningNNParser, self).__init__(model, basestr=basestr, custom_objects=custom_objects)
         self._sharing_groups = []
         self._avoid_pruning = set()
         self._t2g = None
+        if gate_class is None:
+            self._gate_class = DifferentiableGate
+        else:
+            self._gate_class = gate_class
 
     def parse(self):
         super(PruningNNParser, self).parse()
@@ -166,7 +170,7 @@ class PruningNNParser(NNParser):
                         inbound[1] = target[1]
                         inbound[2] = target[2]
 
-    def inject(self, avoid=None):
+    def inject(self, avoid=None, with_mapping=False):
         """This function injects differentiable gates into the model.
 
         # Arguments.
@@ -196,7 +200,7 @@ class PruningNNParser(NNParser):
             
             # Create a gate
             channels = self.get_nchannel(list(group)[0])
-            gate = DifferentiableGate(channels, 0.5, name=self.get_id("gate"))
+            gate = self._gate_class(channels, name=self.get_id("gate"))
             gate_dict = serialize(gate)
             model_dict["config"]["layers"].append(gate_dict)
 
@@ -260,7 +264,7 @@ class PruningNNParser(NNParser):
                             model_dict["config"]["layers"].append(lambda_dict)
                             gate_dict_ = lambda_dict
                             gate_level_ = 0
-                        tensor = 1 if gate_dict_["class_name"] == "DifferentiableGate" else 0
+                        tensor = 1 if gate_dict_["class_name"] == self._gate_class.__name__ else 0
                         inbound.append([gate_dict_["name"], gate_level_, tensor, {}])
                     gate_dict["inbound_nodes"].append(inbound)
                 gate_mapping[(n, level)] = gate_dict, gate_level
@@ -279,7 +283,7 @@ class PruningNNParser(NNParser):
             model_dict["config"]["layers"].append(stop_gradient_dict)
 
             # Make connections
-            tensor = 1 if gate_dict["class_name"] == "DifferentiableGate" else 0
+            tensor = 1 if gate_dict["class_name"] == self._gate_class.__name__ else 0
             stop_gradient_dict["inbound_nodes"].append([[gate_dict["name"], gate_level, tensor, {}]])
             modifier_dict["inbound_nodes"].append([[n, level, 0, {}], [stop_gradient.name, 0, 0, {}]])
             self._reroute(at=(node_data["layer_dict"], level, 0), target=(modifier_dict, 0, 0), layers_dict=layers_dict)
@@ -288,12 +292,19 @@ class PruningNNParser(NNParser):
         self.traverse(node_callbacks=[modify_output])
 
         model_json = json.dumps(model_dict)
-        custom_objects = {"DifferentiableGate":DifferentiableGate}
+        custom_objects = {self._gate_class.__name__:self._gate_class}
         custom_objects.update(self._custom_objects)
         ret = tf.keras.models.model_from_json(model_json, custom_objects=custom_objects)
         for layer in self._model.layers:
             ret.get_layer(layer.name).set_weights(layer.get_weights())
-        return ret
+
+        if with_mapping:
+            ret_mapping = {}
+            for key, val in gate_mapping.items():
+                ret_mapping[key[0]] = val[0]["config"]["name"]
+            return ret, ret_mapping
+        else:
+            return ret
 
     def get_t2g(self):
         """Returns the mapping from targets to gates.
@@ -333,7 +344,7 @@ class PruningNNParser(NNParser):
         gate_mapping = {}
         for layer_dict in gmodel_dict["config"]["layers"]:
             glayers_dict[layer_dict["config"]["name"]] = layer_dict
-            if layer_dict["class_name"] == "DifferentiableGate":
+            if layer_dict["class_name"] == self._gate_class.__name__:
                 g2t[layer_dict["name"]] = set()
                 gate = gmodel.get_layer(layer_dict["name"]).binary_selection() == 1.0
                 for flow in layer_dict["inbound_nodes"]:
