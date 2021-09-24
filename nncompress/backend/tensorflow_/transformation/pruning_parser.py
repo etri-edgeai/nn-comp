@@ -151,7 +151,7 @@ class PruningNNParser(NNParser):
         if target_group is None:
             raise ValueError("No sharing group for %s" % target)
         return [ copy.deepcopy(i) for i in target_group ]
-            
+ 
     def _reroute(self, at, target, layers_dict):
         """
             Assumption:
@@ -170,7 +170,7 @@ class PruningNNParser(NNParser):
                         inbound[1] = target[1]
                         inbound[2] = target[2]
 
-    def inject(self, avoid=None, with_mapping=False):
+    def inject(self, avoid=None, with_mapping=False, with_splits=False):
         """This function injects differentiable gates into the model.
 
         # Arguments.
@@ -193,8 +193,18 @@ class PruningNNParser(NNParser):
         for layer_dict in model_dict["config"]["layers"]:
             layers_dict[layer_dict["config"]["name"]] = layer_dict
 
+        if with_splits:
+            sharing_groups_ = []
+            for g in self._sharing_groups:
+                sharing_groups_ += [
+                    [target]
+                    for target in g
+                ]
+        else:
+            sharing_groups_ = self._sharing_groups
+
         gate_mapping = {}
-        for group in self._sharing_groups:
+        for group in sharing_groups_:
             if len(avoid.intersection(group)) > 0:
                 continue
             
@@ -299,10 +309,7 @@ class PruningNNParser(NNParser):
             ret.get_layer(layer.name).set_weights(layer.get_weights())
 
         if with_mapping:
-            ret_mapping = {}
-            for key, val in gate_mapping.items():
-                ret_mapping[key[0]] = val[0]["config"]["name"]
-            return ret, ret_mapping
+            return ret, gate_mapping
         else:
             return ret
 

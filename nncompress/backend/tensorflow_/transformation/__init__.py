@@ -27,7 +27,7 @@ def parse(model, parser_class, name=None, **kwargs):
 
     return parsers
 
-def inject(parsers, name=None, avoid=None):
+def inject(parsers, name=None, avoid=None, with_splits=False):
 
     if name is None:
         parser = parsers["root"]
@@ -35,13 +35,13 @@ def inject(parsers, name=None, avoid=None):
         parser = parsers[name]
 
     model = parser._model
-    imodel, igate_mapping = parser.inject(avoid=avoid, with_mapping=True)
+    imodel, igate_mapping = parser.inject(avoid=avoid, with_mapping=True, with_splits=with_splits)
     imodel_dict = json.loads(imodel.to_json())
     weights = {layer.name:layer.get_weights() for layer in imodel.layers}
 
     for idx, layer in enumerate(model.layers):
         if layer.name in parsers:
-            isub_model, isub_gate_mapping = inject(parsers, layer.name, avoid=avoid)
+            isub_model, isub_gate_mapping = inject(parsers, layer.name, avoid=avoid, with_splits=with_splits)
             isub_model_dict = json.loads(isub_model.to_json())
 
             imodel_dict["config"]["layers"][idx]["config"]["layers"] = isub_model_dict["config"]["layers"]
