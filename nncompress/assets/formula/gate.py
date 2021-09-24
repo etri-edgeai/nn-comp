@@ -56,7 +56,6 @@ class DifferentiableGateFormula(Formula):
     def get_sparsity_loss(self):
         return self.reg_weight * M.norm(self.sparsity - self.get_sparsity(True), 2)
 
-
 class SimplePruningGateFormula(Formula):
 
     def __init__(self):
