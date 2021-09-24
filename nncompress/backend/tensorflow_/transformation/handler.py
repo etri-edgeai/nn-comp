@@ -137,6 +137,7 @@ LAYER_HANDLERS = {
     "Conv2D": Conv2DHandler,
     "Dense": DenseHandler,
     "BatchNormalization": ShiftHandler,
+    "DepthwiseConv2D": ShiftHandler,
     "Concatenate": ConcatHandler,
     "Flatten": FlattenHandler
 }
