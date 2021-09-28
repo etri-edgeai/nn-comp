@@ -9,6 +9,7 @@ import imgaug as ia
 from imgaug import augmenters as iaa
 import numpy as np
 import os
+import argparse
 
 tf.random.set_seed(2)
 import numpy as np
@@ -17,40 +18,22 @@ import random
 random.seed(1234)
 ia.seed(1234)
 
-from sklearn.model_selection import StratifiedShuffleSplit
-import cv2
-import albumentations as albu
-from skimage.transform import resize
 import numpy as np
-from pylab import rcParams
-from tensorflow.keras.callbacks import Callback, EarlyStopping, ReduceLROnPlateau
+from tensorflow.keras.callbacks import Callback
 import tensorflow as tf
 tf.executing_eagerly()
 from tensorflow import keras
-from tensorflow.keras.models import Sequential, load_model
-from tensorflow.keras.layers import Dropout, Dense, GlobalAveragePooling2D
-from tensorflow.keras.optimizers import Adam
-#import efficientnet.keras as efn
 
-import argparse
+import albumentations as albu
+from sklearn.model_selection import StratifiedShuffleSplit
 
-#constant
-height = 224
-width = 224
-channels = 3
-
+# constants
 n_classes = 100
-input_shape = (height, width, channels)
-
 epochs = 50
 batch_size = 8
 
-
-def resize_img(img, shape):
-    return cv2.resize(img, (shape[1], shape[0]), interpolation=cv2.INTER_CUBIC)
-
 class DataGenerator(keras.utils.Sequence):
-    def __init__(self, images, labels=None, mode='fit', batch_size=batch_size, dim=(height, width), channels=channels, n_classes=n_classes, shuffle=True, augment=False):
+    def __init__(self, images, labels=None, mode='fit', batch_size=batch_size, dim=(32, 32), channels=3, n_classes=n_classes, shuffle=True, augment=False, preprocess_func=None):
         
         #initializing the configuration of the generator
         self.images = images
@@ -64,6 +47,7 @@ class DataGenerator(keras.utils.Sequence):
         self.augment = augment
         self.on_epoch_end()
         self.rand_aug = iaa.RandAugment(n=3, m=7)
+        self.preprocess_func = preprocess_func
    
     #method to be called after every epoch
     def on_epoch_end(self):
@@ -87,12 +71,11 @@ class DataGenerator(keras.utils.Sequence):
         for i, ID in enumerate(batch_indexes):
             #generate pre-processed image
             img = self.images[ID]
-            #image rescaling
-            img = img.astype(np.float32)/255.
-            #img = tf.keras.applications.efficientnet.preprocess_input(img)
+
+            if self.preprocess_func is not None:
+                img = self.preprocess_func(img)
 
             #resizing as per new dimensions
-            img = resize_img(img, self.dim)
             X[i] = img
            
         #generate mini-batch of y
@@ -100,7 +83,7 @@ class DataGenerator(keras.utils.Sequence):
             y = self.labels[batch_indexes]
             
             #augmentation on the training dataset
-            if self.augment == True:
+            if self.augment:
                 X = self.__augment_batch(X)
 
             self.last = (X, y)
@@ -127,7 +110,15 @@ class DataGenerator(keras.utils.Sequence):
             #img_batch[i] = self.rand_aug(img_batch[i])
         return img_batch
 
-def load_data(subtract_pixel_mean=False):
+def load_data(model_handler):
+
+    dim = (model_handler.height, model_handler.width)
+    preprocess_func = model_handler.preprocess_func
+
+    if hasattr(model_handler, "batch_size"):
+        batch_size_ = model_handler.batch_size
+    else:
+        batch_size_ = batch_size
 
     # Load the CIFAR10/100 data.
     (x_train, y_train), (x_test, y_test) = cifar100.load_data()
@@ -151,50 +142,26 @@ def load_data(subtract_pixel_mean=False):
     print("Number of training samples: ", x_train_data.shape[0])
     print("Number of validation samples: ", x_val_data.shape[0])
 
-    train_data_generator = DataGenerator(x_train_data, y_train_data, augment=True)
-    valid_data_generator = DataGenerator(x_val_data, y_val_data, augment=False)
-    test_data_generator = DataGenerator(x_test, y_test, augment=False)
+    train_data_generator = DataGenerator(x_train_data, y_train_data, batch_size=batch_size_, augment=True, dim=dim, preprocess_func=preprocess_func)
+    valid_data_generator = DataGenerator(x_val_data, y_val_data, batch_size=batch_size_, augment=False, dim=dim, preprocess_func=preprocess_func)
+    test_data_generator = DataGenerator(x_test, y_test, batch_size=batch_size_, augment=False, dim=dim, preprocess_func=preprocess_func)
     
     return train_data_generator, valid_data_generator, test_data_generator
 
 
-def load_efficient_net():
-    import efficientnet.tfkeras as efn
+def train(model, model_name, model_handler, run_eagerly=False, callbacks=None):
 
-    efnb0 = efn.EfficientNetB0(weights='imagenet', include_top=False, input_shape=input_shape, classes=n_classes)
-    #efnb0 = tf.keras.applications.efficientnet.EfficientNetB0(include_top=False, weights='imagenet', input_tensor=None, input_shape=input_shape, pooling=None, classes=100)
-    model = Sequential()
-    model.add(efnb0)
-    model.add(GlobalAveragePooling2D())
-    model.add(Dropout(0.5))
-    model.add(Dense(n_classes, activation='softmax'))
-    return model
+    train_data_generator, valid_data_generator, test_data_generator = load_data(model_handler)
 
-
-def train(model, name, run_eagerly=False, callbacks=None):
-
-    if callbacks is None:
-        callbacks = []
-
-    train_data_generator, valid_data_generator, test_data_generator = load_data()
-
-    optimizer = Adam(lr=0.0001)
-
-    #early stopping to monitor the validation loss and avoid overfitting
-    early_stop = EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=10, restore_best_weights=True)
-
-    #reducing learning rate on plateau
-    rlrop = ReduceLROnPlateau(monitor='val_loss', mode='min', patience= 5, factor= 0.5, min_lr= 1e-6, verbose=1)
-
-    #model compiling
-    model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['accuracy'], run_eagerly=run_eagerly)
+    callbacks = model_handler.get_callbacks()
+    model_handler.compile(model)
 
     # Prepare model model saving directory.
     save_dir = os.path.join(os.getcwd(), 'saved_models')
-    model_name = '%s_model.{epoch:03d}.h5' % name
+    model_name_ = '%s_model.{epoch:03d}.h5' % model_name
     if not os.path.isdir(save_dir):
         os.makedirs(save_dir)
-    filepath = os.path.join(save_dir, model_name)
+    filepath = os.path.join(save_dir, model_name_)
 
     mchk = keras.callbacks.ModelCheckpoint(
         filepath=filepath,
@@ -209,39 +176,47 @@ def train(model, name, run_eagerly=False, callbacks=None):
 
     model_history = model.fit_generator(train_data_generator,
                                     validation_data=valid_data_generator,
-                                    callbacks=[rlrop, mchk]+callbacks,
+                                    callbacks=[mchk]+callbacks,
                                     verbose=1,
                                     epochs=epochs)
 
-def prune(model):
+def prune(model, model_name):
 
     from group_fisher import make_group_fisher
     gmodel, pc = make_group_fisher(model, batch_size, target_ratio=0.1)
     optimizer = Adam(lr=0.0001)
     #gf.gmodel.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['accuracy'])
 
-    train(gmodel, "gmodel", run_eagerly=True, callbacks=[pc]) 
+    train(gmodel, model_name+"_gmodel", run_eagerly=True, callbacks=[pc]) 
 
 
 
 def run():
     parser = argparse.ArgumentParser(description='CIFAR100 ', add_help=False)
-    parser.add_argument('--model', type=str, default=None, help='model')
+    parser.add_argument('--model_path', type=str, default=None, help='model')
+    parser.add_argument('--model_name', type=str, default=None, help='model')
     parser.add_argument('--mode', type=str, default="test", help='model')
     args = parser.parse_args()
 
+    if args.model_name == "efnet":
+        from models import efficientnet as model_handler
+    elif args.model_name == "vit":
+        from models import vit as model_handler
+    elif args.model_name == "densenet":
+        from models import densenet as model_handler
+    elif args.model_name == "mlp":
+        from models import mlp as model_handler
+
     if args.mode == "test": 
-        model = tf.keras.models.load_model(args.model)
-        _, _, test_data_gen = load_data()
+        model = tf.keras.models.load_model(args.model_path)
+        _, _, test_data_gen = load_data(model_handler)
         print(model.evaluate(test_data_gen, verbose=1)[1])
     elif args.mode == "train": # train
-        if args.model == "enet":
-            model = load_efficient_net()
-        train(model, args.model)
-
+        model = model_handler.get_model(n_classes=n_classes)
+        train(model, model_handler.get_name(), model_handler)
     elif args.mode == "prune":
-        model = tf.keras.models.load_model(args.model)
-        prune(model) 
+        model = tf.keras.models.load_model(args.model_path)
+        prune(model, model_handler) 
 
 if __name__ == "__main__":
     run()
