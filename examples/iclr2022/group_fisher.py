@@ -58,11 +58,12 @@ class PruningCallback(keras.callbacks.Callback):
         self.targets = targets
         self.period = period
         self.target_ratio = target_ratio
+        self.continue_pruning = True
         self._iter = 0
 
     def on_train_batch_end(self, batch, logs=None):
         self._iter += 1
-        if self._iter % self.period == 0 and not (len(self.model.grad_holder) == 1 and self.model.grad_holder[0] is None):
+        if self._iter % self.period == 0 and self.continue_pruning:
             # Pruning upon self.grad_holder
             #gates = find_all(self.model, SimplePruningGate)
             gates = self.targets
@@ -92,6 +93,7 @@ class PruningCallback(keras.callbacks.Callback):
 
             print(min_layer.name, np.sum(min_layer.gates.numpy()) / min_layer.ngates, compute_sparsity(gates))
             collecting = compute_sparsity(gates) <= self.target_ratio
+            self.continue_pruning = collecting
             for layer in gates:
                 layer.grad_holder = []
                 layer.collecting = collecting
