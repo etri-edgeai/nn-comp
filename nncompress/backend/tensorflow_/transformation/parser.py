@@ -61,7 +61,7 @@ class NNParser(object):
 
         self._graph = nx.MultiDiGraph()
         self._model_dict = None
-        self._layers_dict = None
+        #self._layers_dict = None
 
         self._id_cnt = {}
         self._basestr = basestr
@@ -85,9 +85,11 @@ class NNParser(object):
         else:
             return self._basestr + prefix + "_" + str(self._id_cnt[prefix])
 
+    """
     def get_layer_dict(self, name):
         assert name in self._layers_dict
         return copy.deepcopy(self._layers_dict[name])
+    """
 
     def get_nodes(self, ids):
         """Return the nodes upon `ids`
@@ -357,9 +359,6 @@ class NNParser(object):
         model_dict = json.loads(self._model.to_json())
         self._model_dict = model_dict
         layers = model_dict["config"]["layers"]
-        self._layers_dict = {}
-        for layer_dict in model_dict["config"]["layers"]:
-            self._layers_dict[layer_dict["config"]["name"]] = layer_dict
 
         # Load nodes and edges onto an internal graph defined by networkx.
         for layer in layers:            

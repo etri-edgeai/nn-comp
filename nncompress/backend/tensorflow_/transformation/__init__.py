@@ -56,3 +56,28 @@ def inject(parsers, name=None, avoid=None, with_splits=False):
     for layer in model.layers:
         ret.get_layer(layer.name).set_weights(weights[layer.name])
     return ret, igate_mapping
+
+def cut(parsers, gmodel, name=None):
+
+    if name is None:
+        parser = parsers["root"]
+    else:
+        parser = parsers[name]
+
+    icmodel = parser.cut(gmodel)
+    icmodel_dict = json.loads(icmodel.to_json()) 
+    weights = {layer.name:layer.get_weights() for layer in icmodel.layers}
+    for idx, layer in enumerate(icmodel.layers):
+        if layer.name in parsers:
+            gmodel_layer = gmodel.get_layer(layer.name)
+            cmodel = cut(parsers, gmodel_layer, name=layer.name)
+            
+            cmodel_dict = json.loads(cmodel.to_json())
+            icmodel_dict["config"]["layers"][idx]["config"]["layers"] = cmodel_dict["config"]["layers"]
+            weights[layer.name] = cmodel.get_weights()
+            
+    model_json = json.dumps(icmodel_dict)
+    ret = keras.models.model_from_json(model_json, custom_objects=parser._custom_objects)
+    for layer in icmodel.layers:
+        ret.get_layer(layer.name).set_weights(weights[layer.name])
+    return ret

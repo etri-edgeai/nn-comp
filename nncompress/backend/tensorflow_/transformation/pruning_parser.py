@@ -361,9 +361,13 @@ class PruningNNParser(NNParser):
                             gate_mapping[(inbound[0], inbound[1])] = gate
 
         history = {n:None for n in self._graph.nodes}
-        weights = {n:self._model.get_layer(n).get_weights() for n in self._graph.nodes}
+        weights = {
+            n:gmodel.get_layer(n).get_weights() for n in self._graph.nodes
+            if gmodel.get_layer(n).__class__.__name__ != "Functional"
+        }
 
         def cut_weights(n, level):
+
             node_data = self._graph.nodes[n]
             h = get_handler(node_data["layer_dict"]["class_name"])
 
@@ -376,13 +380,13 @@ class PruningNNParser(NNParser):
                     continue
                 elif (src, level_change[0]) in gate_mapping:
                     gates.append(gate_mapping[(src, level_change[0])])
-                else:
+                elif glayers_dict[n]["class_name"] != "Functional":
                     # TODO: better implementation for getting the channel of src?
                     gates.append(np.ones((self.get_nchannel(src),)) == 1.0) # Holder
 
             if len(gates) == 0:
                 return
- 
+
             input_gate = h.update_gate(gates, self._model.get_layer(n).input_shape)
             if input_gate is None:
                 input_gate = gates[0]
@@ -393,7 +397,7 @@ class PruningNNParser(NNParser):
             if not history[n]:
                 new_weights = h.cut_weights(weights[n], input_gate, output_gate)
                 weights[n] = new_weights
-                h.update_layer_schema(layers_dict[n], weights[n])
+                h.update_layer_schema(layers_dict[n], weights[n], input_gate, output_gate)
                 history[n] = (input_gate, output_gate)
 
         self.traverse(node_callbacks=[cut_weights])
@@ -401,7 +405,10 @@ class PruningNNParser(NNParser):
         model_json = json.dumps(model_dict)
         ret = tf.keras.models.model_from_json(model_json, custom_objects=self._custom_objects)
         for layer in ret.layers:
-            layer.set_weights(weights[layer.name])
+            if layer.name in weights:
+                layer.set_weights(weights[layer.name])
+            else:
+                print(layer.name, " is not in `weights`. It should be handled somewhere.")
 
         if return_history:
             ret = (ret, history)

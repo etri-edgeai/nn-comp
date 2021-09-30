@@ -10,7 +10,7 @@ from keras_cv_attention_models import mlp_family
 height = 224
 width = 224
 input_shape = (height, width, 3) # network input
-batch_size = 4
+batch_size = 8
 
 def get_name():
     return "mlp"
@@ -21,7 +21,8 @@ def preprocess_func(img):
     return img
 
 def get_model(n_classes=100):
-    model = mlp_family.ResMLP_B24(num_classes=n_classes, pretrained="imagenet")
+    #model = mlp_family.ResMLP_B24(num_classes=n_classes, pretrained="imagenet")
+    model = mlp_family.MLPMixerB16(num_classes=n_classes, pretrained="imagenet")
     print(model.summary())
     return model
 
