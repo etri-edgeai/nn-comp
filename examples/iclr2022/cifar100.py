@@ -2,26 +2,24 @@
 
 from __future__ import print_function
 import tensorflow as tf
+tf.random.set_seed(2)
+import random
+random.seed(1234)
+import numpy as np
+np.random.seed(1234)
+import imgaug as ia
+ia.seed(1234)
 from tensorflow.keras.datasets import cifar10
 from tensorflow.keras.datasets import cifar100
 import efficientnet.tfkeras
-import imgaug as ia
-from imgaug import augmenters as iaa
-import numpy as np
 import os
 import argparse
 
-tf.random.set_seed(2)
-import numpy as np
-np.random.seed(1234)
-import random
-random.seed(1234)
-ia.seed(1234)
+
+#from imgaug import augmenters as iaa
 
 import numpy as np
 from tensorflow.keras.callbacks import Callback
-import tensorflow as tf
-tf.executing_eagerly()
 from tensorflow import keras
 
 import albumentations as albu
@@ -46,7 +44,7 @@ class DataGenerator(keras.utils.Sequence):
         self.shuffle = shuffle
         self.augment = augment
         self.on_epoch_end()
-        self.rand_aug = iaa.RandAugment(n=3, m=7)
+        #self.rand_aug = iaa.RandAugment(n=3, m=7)
         self.preprocess_func = preprocess_func
    
     #method to be called after every epoch
@@ -149,12 +147,19 @@ def load_data(model_handler):
     return train_data_generator, valid_data_generator, test_data_generator
 
 
-def train(model, model_name, model_handler, run_eagerly=False, callbacks=None):
+def train(model, model_name, model_handler, run_eagerly=False, callbacks=None, is_training=True):
 
     train_data_generator, valid_data_generator, test_data_generator = load_data(model_handler)
 
-    callbacks = model_handler.get_callbacks()
-    model_handler.compile(model)
+    if is_training and hasattr(model_handler, "get_train_epochs"):
+        epochs_ = model_handler.get_train_epochs()
+    else:
+        epochs_ = epochs
+
+    if callbacks is None:   
+        callbacks = []
+    callbacks_ = model_handler.get_callbacks()
+    model_handler.compile(model, run_eagerly=run_eagerly)
 
     # Prepare model model saving directory.
     save_dir = os.path.join(os.getcwd(), 'saved_models')
@@ -176,20 +181,44 @@ def train(model, model_name, model_handler, run_eagerly=False, callbacks=None):
 
     model_history = model.fit_generator(train_data_generator,
                                     validation_data=valid_data_generator,
-                                    callbacks=[mchk]+callbacks,
+                                    callbacks=[mchk]+callbacks+callbacks_,
                                     verbose=1,
-                                    epochs=epochs)
+                                    epochs=epochs_)
 
-def prune(model, model_name):
+def prune(model, model_handler):
 
+    print(model.summary())
+
+    _, _, test_data_gen = load_data(model_handler)
+    def validate(model_):
+        model_handler.compile(model_, run_eagerly=True)
+        print("VAL: ", model_.evaluate(test_data_gen, verbose=1)[1])
+
+    """
+    from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
+    from nncompress.backend.tensorflow_.transformation import parse, inject, cut
+    from nncompress.backend.tensorflow_ import SimplePruningGate, DifferentiableGate
+    from nncompress.backend.tensorflow_.transformation import parse, inject, cut
+    parsers = parse(model, PruningNNParser, custom_objects=None, gate_class=SimplePruningGate)
+    gmodel = keras.models.load_model("saved_models/efnet_compressed_temp.h5", custom_objects={"SimplePruningGate":SimplePruningGate})
+    cmodel = cut(parsers, gmodel)
+    model_handler.compile(cmodel, run_eagerly=True)
+    #model_handler.compile(gmodel, run_eagerly=True)
+    validate(cmodel)
+    xxx
+    """
     from group_fisher import make_group_fisher
-    gmodel, pc = make_group_fisher(model, batch_size, target_ratio=0.1)
-    optimizer = Adam(lr=0.0001)
-    #gf.gmodel.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['accuracy'])
-
-    train(gmodel, model_name+"_gmodel", run_eagerly=True, callbacks=[pc]) 
-
-
+    gmodel, pc = make_group_fisher(
+        model,
+        batch_size,
+        target_ratio=0.5,
+        target_gidx=0,
+        target_idx=1,
+        with_splits=True,
+        enable_norm=False,
+        prefix="saved_models/"+model_handler.get_name()+"_compressed_temp",
+        validate=validate)
+    train(gmodel, model_handler.get_name()+"_gmodel", model_handler, run_eagerly=True, callbacks=[pc], is_training=False) 
 
 def run():
     parser = argparse.ArgumentParser(description='CIFAR100 ', add_help=False)
@@ -204,8 +233,12 @@ def run():
         from models import vit as model_handler
     elif args.model_name == "densenet":
         from models import densenet as model_handler
+    elif args.model_name == "densenet121":
+        from models import densenet121 as model_handler
     elif args.model_name == "mlp":
         from models import mlp as model_handler
+    elif args.model_name == "resnet":
+        from models import resnet as model_handler
 
     if args.mode == "test": 
         model = tf.keras.models.load_model(args.model_path)

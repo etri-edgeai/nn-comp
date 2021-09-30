@@ -52,7 +52,7 @@ class LayerHandler(object):
         return None
 
     @staticmethod
-    def update_layer_schema(layer_dict, new_weights):
+    def update_layer_schema(layer_dict, new_weights, input_gate, output_gate):
         return
 
     @staticmethod
@@ -74,7 +74,7 @@ class Conv2DHandler(LayerHandler):
         return True
 
     @staticmethod
-    def update_layer_schema(layer_dict, new_weights):
+    def update_layer_schema(layer_dict, new_weights, input_gate, output_gate):
         layer_dict["config"]["filters"] = new_weights[0].shape[-1]
         return
 
@@ -85,7 +85,7 @@ class DenseHandler(LayerHandler):
         return True
 
     @staticmethod
-    def update_layer_schema(layer_dict, new_weights):
+    def update_layer_schema(layer_dict, new_weights, input_gate, output_gate):
         layer_dict["config"]["units"] = new_weights[0].shape[-1]
         return
 
@@ -102,6 +102,31 @@ class ShiftHandler(LayerHandler):
             x[1] -> mask
         """
         return Lambda(lambda x: x[0] * x[1], name=name)
+
+class DWConv2DHandler(LayerHandler):
+
+    @staticmethod
+    def is_transformer(tensor_idx):
+        return False
+
+    @staticmethod
+    def get_output_modifier(name):
+        """
+            x[0] -> data
+            x[1] -> mask
+        """
+        return Lambda(lambda x: x[0] * x[1], name=name)
+
+    @staticmethod
+    def cut_weights(W, in_gate, out_gate):
+        ret = []
+        for w in W:
+            if len(w.shape) == 4:
+                w_ = cut(copy.deepcopy(w), out_gate, None)
+            else:
+                w_ = cut(copy.deepcopy(w), in_gate, out_gate)
+            ret.append(w_)
+        return ret
 
 class ConcatHandler(LayerHandler):
 
@@ -133,11 +158,24 @@ class FlattenHandler(LayerHandler):
         shape[-1] = 1 # not repeated at the last dim.
         return np.tile(gates, tuple(shape)).flatten()
 
+class ReshapeHandler(LayerHandler):
+
+    @staticmethod
+    def is_transformer(tensor_idx):
+        return False
+
+    @staticmethod
+    def update_layer_schema(layer_dict, new_weights, input_gate, output_gate):
+        val = int(np.sum(output_gate))
+        layer_dict["config"]["target_shape"][-1] = val
+        return
+
 LAYER_HANDLERS = {
     "Conv2D": Conv2DHandler,
     "Dense": DenseHandler,
     "BatchNormalization": ShiftHandler,
-    "DepthwiseConv2D": ShiftHandler,
+    "DepthwiseConv2D": DWConv2DHandler,
     "Concatenate": ConcatHandler,
-    "Flatten": FlattenHandler
+    "Flatten": FlattenHandler,
+    "Reshape": ReshapeHandler
 }
