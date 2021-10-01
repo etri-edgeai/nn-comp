@@ -212,12 +212,14 @@ def prune(model, model_handler):
         model,
         batch_size,
         target_ratio=0.5,
-        target_gidx=0,
-        target_idx=1,
+        target_gidx=-1,
+        target_idx=-1,
         with_splits=True,
         enable_norm=False,
         prefix="saved_models/"+model_handler.get_name()+"_compressed_temp",
-        validate=validate)
+        validate=validate,
+        exploit_topology=True,
+        num_remove=1000)
     train(gmodel, model_handler.get_name()+"_gmodel", model_handler, run_eagerly=True, callbacks=[pc], is_training=False) 
 
 def run():

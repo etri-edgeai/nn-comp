@@ -55,24 +55,7 @@ class PruningNNParser(NNParser):
     def parse(self):
         super(PruningNNParser, self).parse()
 
-        affecting_layers = OrderedDict()
-        for n in self._graph.nodes(data=True):
-            for idx in range(n[1]["nlevel"]):
-                affecting_layers[(n[0], idx)] = OrderedSet()
-
-        def pass_(e):
-            src = self._graph.nodes.data()[e[0]]
-            dst = self._graph.nodes.data()[e[1]]
-            level_change = e[2]["level_change"]
-            if get_handler(src["layer_dict"]["class_name"]).is_transformer(e[2]["tensor"]):
-                affecting_layers[(e[1], level_change[1])].add((e[0], level_change[0], e[2]["tensor"]))
-            elif get_handler(dst["layer_dict"]["class_name"]).is_concat():
-                affecting_layers[(e[1], level_change[1])] = OrderedSet() # Cancel previous info.
-            else:
-                if (e[0], level_change[0]) in affecting_layers: # To handle leaves
-                    affecting_layers[(e[1], level_change[1])].update(affecting_layers[(e[0], level_change[0])])
-
-        self.traverse(neighbor_callbacks=[pass_])
+        affecting_layers = self.get_affecting_layers()
 
         # Find sharing groups
         for layer, group  in affecting_layers.items():
@@ -97,6 +80,33 @@ class PruningNNParser(NNParser):
 
         # Find layers to avoid pruning
         self._avoid_pruning = self.get_last_transformers()
+
+    def get_affecting_layers(self):
+        """This function computes the affecting layers of each node.
+
+        """
+        if self._model_dict is None:
+            super(PruningNNParser, self).parse()
+
+        affecting_layers = OrderedDict()
+        for n in self._graph.nodes(data=True):
+            for idx in range(n[1]["nlevel"]):
+                affecting_layers[(n[0], idx)] = OrderedSet()
+
+        def pass_(e):
+            src = self._graph.nodes.data()[e[0]]
+            dst = self._graph.nodes.data()[e[1]]
+            level_change = e[2]["level_change"]
+            if get_handler(src["layer_dict"]["class_name"]).is_transformer(e[2]["tensor"]):
+                affecting_layers[(e[1], level_change[1])].add((e[0], level_change[0], e[2]["tensor"]))
+            elif get_handler(dst["layer_dict"]["class_name"]).is_concat():
+                affecting_layers[(e[1], level_change[1])] = OrderedSet() # Cancel previous info.
+            else:
+                if (e[0], level_change[0]) in affecting_layers: # To handle leaves
+                    affecting_layers[(e[1], level_change[1])].update(affecting_layers[(e[0], level_change[0])])
+
+        self.traverse(neighbor_callbacks=[pass_])
+        return affecting_layers
 
     def get_last_transformers(self):
         """This function returns the names of last transformers whose units/channels are related to
