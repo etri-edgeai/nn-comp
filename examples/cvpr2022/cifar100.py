@@ -31,7 +31,7 @@ epochs = 50
 batch_size = 8
 
 class DataGenerator(keras.utils.Sequence):
-    def __init__(self, images, labels=None, mode='fit', batch_size=batch_size, dim=(32, 32), channels=3, n_classes=n_classes, shuffle=True, augment=False, preprocess_func=None):
+    def __init__(self, images, labels=None, mode='fit', batch_size=batch_size, dim=(32, 32), channels=3, n_classes=n_classes, shuffle=True, augment=False, preprocess_func=None, batch_preprocess_func=None):
         
         #initializing the configuration of the generator
         self.images = images
@@ -46,7 +46,8 @@ class DataGenerator(keras.utils.Sequence):
         self.on_epoch_end()
         #self.rand_aug = iaa.RandAugment(n=3, m=7)
         self.preprocess_func = preprocess_func
-   
+        self.batch_preprocess_func = batch_preprocess_func
+
     #method to be called after every epoch
     def on_epoch_end(self):
         self.indexes = np.arange(self.images.shape[0])
@@ -84,10 +85,17 @@ class DataGenerator(keras.utils.Sequence):
             if self.augment:
                 X = self.__augment_batch(X)
 
+            if self.batch_preprocess_func is not None:
+                X = self.batch_preprocess_func(X)
+
             self.last = (X, y)
             return X, y
         
         elif self.mode == 'predict':
+
+            if self.batch_preprocess_func is not None:
+                X = self.batch_preprocess_func(X)
+
             return X
         
         else:
@@ -95,10 +103,14 @@ class DataGenerator(keras.utils.Sequence):
             
     #augmentation for one image
     def __random_transform(self, img):
-        composition = albu.Compose([albu.HorizontalFlip(p=0.5),
-                                   albu.VerticalFlip(p=0.5),
-                                   albu.GridDistortion(p=0.2),
-                                   albu.ElasticTransform(p=0.2)])
+        composition = albu.Compose([
+                                   #albu.VerticalFlip(p=0.5),
+                                   #albu.GridDistortion(p=0.2),
+                                   #albu.RandomResizedCrop(32, 32, scale=(0.08, 1.12)),
+                                    albu.PadIfNeeded(min_height=34, min_width=34),
+                                    albu.RandomCrop(32, 32),
+                                    albu.HorizontalFlip(p=0.5)])
+                                   #albu.ElasticTransform(p=0.2)])
         return composition(image=img)['image']
     
     #augmentation for batch of images
@@ -112,6 +124,10 @@ def load_data(model_handler):
 
     dim = (model_handler.height, model_handler.width)
     preprocess_func = model_handler.preprocess_func
+    if hasattr(model_handler, "batch_preprocess_func"):
+        batch_pf = model_handler.batch_preprocess_func
+    else:
+        batch_pf = None
 
     if hasattr(model_handler, "batch_size"):
         batch_size_ = model_handler.batch_size
@@ -140,9 +156,9 @@ def load_data(model_handler):
     print("Number of training samples: ", x_train_data.shape[0])
     print("Number of validation samples: ", x_val_data.shape[0])
 
-    train_data_generator = DataGenerator(x_train_data, y_train_data, batch_size=batch_size_, augment=True, dim=dim, preprocess_func=preprocess_func)
-    valid_data_generator = DataGenerator(x_val_data, y_val_data, batch_size=batch_size_, augment=False, dim=dim, preprocess_func=preprocess_func)
-    test_data_generator = DataGenerator(x_test, y_test, batch_size=batch_size_, augment=False, dim=dim, preprocess_func=preprocess_func)
+    train_data_generator = DataGenerator(x_train_data, y_train_data, batch_size=batch_size_, augment=True, dim=dim, preprocess_func=preprocess_func, batch_preprocess_func=batch_pf)
+    valid_data_generator = DataGenerator(x_val_data, y_val_data, batch_size=batch_size_, augment=False, dim=dim, preprocess_func=preprocess_func, batch_preprocess_func=batch_pf)
+    test_data_generator = DataGenerator(x_test, y_test, batch_size=batch_size_, augment=False, dim=dim, preprocess_func=preprocess_func, batch_preprocess_func=batch_pf)
     
     return train_data_generator, valid_data_generator, test_data_generator
 
@@ -241,6 +257,10 @@ def run():
         from models import mlp as model_handler
     elif args.model_name == "resnet":
         from models import resnet as model_handler
+    elif args.model_name == "randwired":
+        from models import randwired as model_handler
+    elif args.model_name == "cct":
+        from models import randwired_transformer as model_handler
 
     if args.mode == "test": 
         model = tf.keras.models.load_model(args.model_path)
@@ -248,7 +268,7 @@ def run():
         print(model.evaluate(test_data_gen, verbose=1)[1])
     elif args.mode == "train": # train
         model = model_handler.get_model(n_classes=n_classes)
-        train(model, model_handler.get_name(), model_handler)
+        train(model, model_handler.get_name(), model_handler, run_eagerly=True)
     elif args.mode == "prune":
         model = tf.keras.models.load_model(args.model_path)
         prune(model, model_handler) 
