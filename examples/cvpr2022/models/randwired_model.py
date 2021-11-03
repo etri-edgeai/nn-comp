@@ -130,7 +130,9 @@ def base_node_func(x, dim, graph, node, init=tf.keras.initializers.GlorotUniform
             depthwise_initializer=init,
             pointwise_initializer=init,
             bias_initializer="zeros",
-            pointwise_regularizer=regularizers.l2(l2_reg))(x)
+            pointwise_regularizer=regularizers.l2(l2_reg),
+            depthwise_regularizer=regularizers.l2(l2_reg))(x)
+
     else:
         x = tf.keras.layers.SeparableConv2D(
             dim,
@@ -139,7 +141,8 @@ def base_node_func(x, dim, graph, node, init=tf.keras.initializers.GlorotUniform
             depthwise_initializer=init,
             pointwise_initializer=init,
             bias_initializer="zeros",
-            pointwise_regularizer=regularizers.l2(l2_reg))(x)
+            pointwise_regularizer=regularizers.l2(l2_reg),
+            depthwise_regularizer=regularizers.l2(l2_reg))(x)
     x = tf.keras.layers.BatchNormalization()(x)
     x = tf.keras.layers.Dropout(dropout_rate)(x)
     return x
@@ -233,6 +236,7 @@ def randwired_cifar(num_classes):
     #init = tf.keras.initializers.HeNormal()
     init = tf.keras.initializers.GlorotUniform()
 
+    """
     preprocess = tf.keras.Sequential([
         tf.keras.layers.Conv2D(
             dim // 2,
@@ -254,6 +258,20 @@ def randwired_cifar(num_classes):
         tf.keras.layers.BatchNormalization(),
         tf.keras.layers.Dropout(dropout_rate)
     ])
+    """
+    preprocess = tf.keras.Sequential([
+        tf.keras.layers.SeparableConv2D(
+            dim // 2,
+            (3,3),
+            padding="same",
+            depthwise_initializer=init,
+            pointwise_initializer=init,
+            bias_initializer="zeros",
+            pointwise_regularizer=regularizers.l2(l2_reg),
+            depthwise_regularizer=regularizers.l2(l2_reg)),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.ReLU()
+    ])
 
     postprocess = tf.keras.Sequential([
         #tf.keras.layers.Conv2D(1280, (1,1), padding="same", kernel_initializer=init),
@@ -265,7 +283,8 @@ def randwired_cifar(num_classes):
             depthwise_initializer=init,
             pointwise_initializer=init,
             bias_initializer="zeros",
-            pointwise_regularizer=regularizers.l2(l2_reg)),
+            pointwise_regularizer=regularizers.l2(l2_reg),
+            depthwise_regularizer=regularizers.l2(l2_reg)),
         tf.keras.layers.BatchNormalization(),
         tf.keras.layers.Dropout(dropout_rate),
         tf.keras.layers.GlobalAveragePooling2D(),
