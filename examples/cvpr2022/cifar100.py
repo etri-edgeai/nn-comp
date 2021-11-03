@@ -14,6 +14,7 @@ from tensorflow.keras.datasets import cifar100
 import efficientnet.tfkeras
 import os
 import argparse
+import cv2
 
 
 #from imgaug import augmenters as iaa
@@ -107,7 +108,7 @@ class DataGenerator(keras.utils.Sequence):
                                    #albu.VerticalFlip(p=0.5),
                                    #albu.GridDistortion(p=0.2),
                                    #albu.RandomResizedCrop(32, 32, scale=(0.08, 1.12)),
-                                    albu.PadIfNeeded(min_height=34, min_width=34),
+                                    albu.PadIfNeeded(min_height=36, min_width=36),
                                     albu.RandomCrop(32, 32),
                                     albu.HorizontalFlip(p=0.5)])
                                    #albu.ElasticTransform(p=0.2)])
@@ -174,7 +175,7 @@ def train(model, model_name, model_handler, run_eagerly=False, callbacks=None, i
 
     if callbacks is None:   
         callbacks = []
-    callbacks_ = model_handler.get_callbacks()
+    callbacks_ = model_handler.get_callbacks(len(train_data_generator))
     model_handler.compile(model, run_eagerly=run_eagerly)
 
     # Prepare model model saving directory.
@@ -260,10 +261,15 @@ def run():
     elif args.model_name == "randwired":
         from models import randwired as model_handler
     elif args.model_name == "cct":
-        from models import randwired_transformer as model_handler
+        from models import cct as model_handler
+    else:
+        raise NotImplementedError()
 
-    if args.mode == "test": 
-        model = tf.keras.models.load_model(args.model_path)
+    if args.mode == "test":
+        if hasattr(model_handler, "get_custom_objects"):
+            model = tf.keras.models.load_model(args.model_path, custom_objects=model_handler.get_custom_objects())
+        else:
+            model = tf.keras.models.load_model(args.model_path)
         _, _, test_data_gen = load_data(model_handler)
         print(model.evaluate(test_data_gen, verbose=1)[1])
     elif args.mode == "train": # train
