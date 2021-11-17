@@ -199,7 +199,7 @@ def prune(dataset, model, model_handler, position_mode, with_label=False, label_
 
     from nncompress.backend.tensorflow_.transformation import parse, inject, cut
     from group_fisher import make_group_fisher
-    gmodel, copied_model, blocks, ordered_groups, parser, pc = make_group_fisher(
+    gmodel, copied_model, blocks, ordered_groups, parser, torder, pc = make_group_fisher(
         model,
         model_handler,
         model_handler.get_batch_size(dataset),
@@ -237,9 +237,13 @@ def prune(dataset, model, model_handler, position_mode, with_label=False, label_
         layer.name for layer in copied_model.layers
     ]
 
+    all_acts_ = [
+        layer.name for layer in copied_model.layers if "Activation" in layer.__class__.__name__
+    ]
+
 
     if position_mode == 0:
-        positions = convs
+        positions = all_acts_
 
     elif position_mode == 4: # 1x1 conv
         positions = []
@@ -249,19 +253,25 @@ def prune(dataset, model, model_handler, position_mode, with_label=False, label_
     elif position_mode == 1: # joints
         positions = []
         for b in blocks:
-            if b[-1][1] not in positions:
-                positions.append(b[-1][1])
+
+            act = parser.get_first_activation(b[-1][1])
+            if act not in positions:
+                positions.append(act)
+
     elif position_mode == 2: # random
         positions = [
-            all_[int(random.random() * len(all_))] for i in range(len(blocks))
+            all_acts_[int(random.random() * len(all_acts_))] for i in range(len(blocks))
         ]
 
     elif position_mode == 3: # cut
         positions  = []
         for b in blocks:
             g = b[-1][0]
-            des = parser.first_common_descendant(list(g), convs, False)
+            des = parser.first_common_descendant(list(g), all_acts_, False)
 
+            if des not in positions:
+                positions.append(des)
+            """
             des_g = None
             for g_, idx in ordered_groups:
                 if des in g_:
@@ -275,6 +285,106 @@ def prune(dataset, model, model_handler, position_mode, with_label=False, label_
             else:
                 if des not in positions:
                     positions.append(des) # maybe the last transforming layer.
+            """
+
+    elif position_mode == 5: # cut
+        affecting_layers = parser.get_affecting_layers()
+
+        cnt = {}
+        for layer_ in affecting_layers:
+            for a in affecting_layers[layer_]:
+                if a[0] not in cnt:
+                    cnt[a[0]] = 0
+                cnt[a[0]] += 1
+
+        node_list = [
+            (key, value) for key, value in  cnt.items()
+        ]
+        node_list = sorted(node_list, key=lambda x: x[1])
+
+        k = 5
+        positions = [
+            parser.get_first_activation(n) for n, _ in node_list[-1*k:]
+        ]
+
+    elif position_mode == 6: # cut
+        affecting_layers = parser.get_affecting_layers()
+
+        cnt = {
+            layer_[0]:0 for layer_ in affecting_layers
+        }
+        for layer_ in affecting_layers:
+            cnt[layer_[0]] = len(affecting_layers[layer_])
+
+        node_list = [
+            (key, value) for key, value in  cnt.items()
+        ]
+        node_list = sorted(node_list, key=lambda x: x[1])
+
+        k = 5
+        positions = [
+            parser.get_first_activation(n) for n, _ in node_list[-1*k:]
+        ]
+
+    elif position_mode == 7:
+
+        cons_ = [
+            (c, torder[c]) for c in convs
+        ]
+
+        node_list = sorted(cons_, key=lambda x: x[1])
+
+        k = 5
+        positions = [
+            n for n, _ in node_list[-1*k:]
+        ]
+
+    elif position_mode == 8:
+        alll_ = [
+            (c, torder[c]) for c in all_ if gmodel.get_layer(c).__class__.__name__ == "Activation"
+        ]
+        node_list = sorted(alll_, key=lambda x: x[1])
+
+        k = 5
+        positions = [
+            n for n, _ in node_list[-1*k:]
+        ]
+        print(node_list)
+
+    elif position_mode == 9:
+        alll_ = [
+            (c, torder[c]) for c in all_
+        ]
+        node_list = sorted(alll_, key=lambda x: x[1])
+
+        k = 5
+        positions = [
+            n for n, _ in node_list[-1*k:]
+        ]
+        print(node_list)
+
+    elif position_mode == 10: # cut
+        positions  = []
+        for b in blocks:
+            g = b[-1][0]
+            des = parser.first_common_descendant(list(g), convs, False)
+
+            des_g = None
+            for g_, idx in ordered_groups:
+                if des in g_:
+                    des_g = g_
+                    break
+
+            if des_g is not None:
+                des = parser.first_common_descendant(list(des_g), all_acts_, False)
+                if des not in positions:
+                    positions.append(des)
+            else:
+                act = parser.get_first_activation(des)
+                if act is None:
+                    act = des
+                if act not in positions:
+                    positions.append(act) # maybe the last transforming layer.
 
     t_outputs = []
     for p in positions:
@@ -327,7 +437,6 @@ def prune(dataset, model, model_handler, position_mode, with_label=False, label_
         gates_weights = {}
         gates_info = []
         for gidx, (g, _) in enumerate(ordered_groups):
-            print(gidx)    
             gates_info.append(gg.get_layer(pc.l2g[g[0]]).gates.numpy().shape[0])
             n_channels_group[gidx] = gates_info[-1]
             for g_ in g:
@@ -338,6 +447,7 @@ def prune(dataset, model, model_handler, position_mode, with_label=False, label_
       
         local_base = 0
         for gidx, (g, _) in enumerate(ordered_groups):
+            print(gidx)    
             gate = gg.get_layer(pc.l2g[g[0]]).gates.numpy()
             for lidx in range(gate.shape[0]):
 
@@ -516,7 +626,12 @@ def prune(dataset, model, model_handler, position_mode, with_label=False, label_
     print(validate(cmodel))
     profile = model_profiler.model_profiler(cmodel, 1)
     print(profile)
-    postfix = "_"+str(position_mode)+"_"+dataset+"_"+str(with_label)+"_"+str(label_only)+"_"+str(curl)
+    if label_only:
+        postfix = "_"+str(position_mode)+"_"+dataset+"_"+str(with_label)+"_gf"
+    elif curl:
+        postfix = "_"+str(position_mode)+"_"+dataset+"_"+str(with_label)+"_curl"
+    else:
+        postfix = "_"+str(position_mode)+"_"+dataset+"_"+str(with_label)+"_ours"+"_"+str(num_blocks)+"_"+str(target_ratio)
     tf.keras.models.save_model(cmodel, "compressed_models/"+model_handler.get_name()+postfix+".h5")
 
     if finetune:
