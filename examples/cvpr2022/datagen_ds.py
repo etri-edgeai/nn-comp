@@ -55,7 +55,7 @@ class DataGenerator(keras.utils.Sequence):
             self.ds = self._ds.shuffle(1024)
         else:
 
-            if self.dataset == "caltech_birds2011":
+            if self.dataset in ["caltech_birds2011", "oxford_iiit_pet", "cars196", "stanford_dogs"]:
                 ds = ds.shuffle(1024)
                 ds = ds.apply(
                     tf.data.experimental.map_and_batch(
@@ -114,7 +114,7 @@ class DataGenerator(keras.utils.Sequence):
                     self.ds_mix = self._ds.shuffle(1024)
                 else:
 
-                    if self.dataset == "caltech_birds2011":
+                    if self.dataset in ["caltech_birds2011", "oxford_iiit_pet", "cars196", "stanford_dogs"]:
                         ds = self._ds.shuffle(1024)
                         ds = ds.apply(
                             tf.data.experimental.map_and_batch(
@@ -133,7 +133,7 @@ class DataGenerator(keras.utils.Sequence):
                     self.ds_cut = self._ds.shuffle(1024)
                 else:
 
-                    if self.dataset == "caltech_birds2011":
+                    if self.dataset in ["caltech_birds2011", "oxford_iiit_pet", "cars196", "stanford_dogs"]:
                         ds = self._ds.shuffle(1024)
                         ds = ds.apply(
                             tf.data.experimental.map_and_batch(

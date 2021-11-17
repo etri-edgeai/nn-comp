@@ -666,6 +666,12 @@ def run():
         n_classes = 200
     elif args.dataset == "imagenet":
         n_classes = 1000
+    elif args.dataset == "oxford_iiit_pet":
+        n_classes = 37
+    elif args.dataset == "cars196":
+        n_classes = 196
+    elif args.dataset == "stanford_dogs":
+        n_classes = 120
 
     dataset = args.dataset
     if args.mode == "test":
