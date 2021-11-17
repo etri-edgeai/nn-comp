@@ -13,8 +13,8 @@ def get_model_handler(model_name):
         from models import densenet as model_handler
     elif model_name == "densenet121":
         from models import densenet121 as model_handler
-    elif model_name == "resnet":
-        from models import resnet as model_handler
+    elif model_name == "resnet50":
+        from models import resnet50 as model_handler
     elif model_name == "randwired":
         from models import randwired as model_handler
     elif model_name == "mobilenetv2":
