@@ -1,4 +1,4 @@
-
+import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import Callback, EarlyStopping, ReduceLROnPlateau
@@ -21,17 +21,20 @@ def get_batch_size(dataset):
     return batch_size
 
 def get_name():
-    return "efnet"
+    return "mobilenetv2"
 
 def preprocess_func(img, shape):
-    img = img.astype(np.float32)/255.
-    img = cv2.resize(img, shape, interpolation=cv2.INTER_CUBIC)
+    img = tf.keras.applications.mobilenet.preprocess_input(img)
+    img = tf.image.resize(img, (height, width))
     return img
 
 def get_model(dataset, n_classes=100):
-    efnb0 = efn.EfficientNetB0(weights='imagenet', include_top=False, input_shape=input_shape, classes=n_classes)
+    model_ = tf.keras.applications.mobilenet_v2.MobileNetV2(
+         alpha=1.0, include_top=False, weights='imagenet',
+            classes=n_classes
+                )
     model = Sequential()
-    model.add(efnb0)
+    model.add(model_)
     model.add(GlobalAveragePooling2D())
     if dataset == "cifar100":
         model.add(Dropout(0.5))
@@ -55,8 +58,5 @@ def get_callbacks(nsteps=0):
 def get_custom_objects():
     return None
 
-def get_train_epochs(finetune=False):
-    if finetune:
-        return 50
-    else:
-        return 100
+def get_train_epochs():
+    return 100

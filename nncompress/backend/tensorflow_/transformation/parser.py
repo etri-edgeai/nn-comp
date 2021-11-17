@@ -265,6 +265,83 @@ class NNParser(object):
                 model_dict["config"]["layers"].remove(r)
         return model_dict
 
+
+    def get_joints(self):
+
+        if len(self.torder) != self._graph.number_of_nodes():
+            return
+
+        max_idx = [-1]
+        joints = []
+        # Finding candidate joints
+        def callback_(n, level): 
+            node_data = self._graph.nodes[n]
+            name = node_data["layer_dict"]["config"]["name"]
+
+            if max_idx[0] <= self.torder[name]:
+                joints.append(name)
+
+            neighbors = self._graph.out_edges(name, data=True)
+            for e in neighbors:
+                src, dst, level_change, inbound_idx = e[0], e[1], e[2]["level_change"], e[2]["inbound_idx"]
+                if max_idx[0] < self.torder[dst]:
+                    max_idx[0] = self.torder[dst]
+          
+        self.traverse(node_callbacks=[callback_])
+        return joints
+
+    def first_common_descendant(self, names, joints, is_transforming=True):
+
+        joints = set(joints)
+        sources = [ x for x in self._graph.nodes(data=True) if x[1]["layer_dict"]["config"]["name"] in names]
+        visits = []
+        for s in sources:
+            v = self.traverse(sources=[s], sync=False)
+            v = [ (v_[0], self.torder[v_[0]]) for v_ in v ]
+            v = sorted(v, key=lambda x: -1*x[1])
+            v.pop() # remove self
+            visits.append(v)
+
+        no_match = False
+        while True:
+            for v in visits:
+                if len(v) == 0:
+                    no_match = True
+                    break
+            if no_match:
+                break
+
+            # find max tidx
+            max_tidx = -1
+            for v in visits:
+                if max_tidx < v[-1][1]:
+                    max_tidx = v[-1][1]
+
+            for v in visits:
+                while v[-1][1] < max_tidx:
+                    v.pop()
+
+            match = True
+            target = visits[0][-1][0]
+            if is_transforming:
+                if not get_handler(self._graph.nodes(data=True)[target]["layer_dict"]["class_name"]).is_transformer(0):
+                    visits[0].pop()
+                    continue
+
+            if target not in joints:
+                visits[0].pop()
+                continue
+
+            for v in visits:
+                if v[-1][0] != target:
+                   match = False
+                   break
+
+            if match:
+                return target
+                
+        return None
+
     def traverse(self,
                  sources=None,
                  inbound=False,
@@ -329,6 +406,7 @@ class NNParser(object):
                 break
 
             neighbors = self._graph.in_edges(curr, data=True) if inbound else self._graph.out_edges(curr, data=True)
+
             for e in neighbors:
                 src, dst, level_change, inbound_idx = e[0], e[1], e[2]["level_change"], e[2]["inbound_idx"]
                 if neighbor_callbacks is not None:
@@ -361,7 +439,7 @@ class NNParser(object):
         layers = model_dict["config"]["layers"]
 
         # Load nodes and edges onto an internal graph defined by networkx.
-        for layer in layers:            
+        for layer in layers: 
             if "inbound_nodes" not in layer: # InputLayer
                 self._graph.add_node(layer["config"]["name"], layer_dict=layer, nlevel=0)
             else:
@@ -372,11 +450,24 @@ class NNParser(object):
                 continue
 
             for flow_idx, flow in enumerate(layer["inbound_nodes"]):
-                for in_idx, inbound in enumerate(flow):
+                if type(flow[0]) != list:
+                    inbound = flow
                     src = inbound[0]
                     dst = layer["config"]["name"]
                     self._graph.add_edge(
-                        src, dst, level_change=(inbound[1], flow_idx), tensor=inbound[2], inbound_idx=in_idx)
+                        src, dst, level_change=(inbound[1], flow_idx), tensor=inbound[2], inbound_idx=0, temp=inbound[-1])
+                else:
+                    for in_idx, inbound in enumerate(flow):
+                        src = inbound[0]
+                        dst = layer["config"]["name"]
+                        self._graph.add_edge(
+                            src, dst, level_change=(inbound[1], flow_idx), tensor=inbound[2], inbound_idx=in_idx, temp=None)
+
+        v = self.traverse()
+        self.torder = {
+            name:idx
+            for idx, (name, _) in enumerate(v)
+        }
 
     def get_topology(self):
         """Return a networkx graph having the topology of the graph.

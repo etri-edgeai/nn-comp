@@ -17,6 +17,19 @@ from nncompress.backend.tensorflow_.transformation.handler import get_handler
 from nncompress.backend.tensorflow_.transformation.parser import NNParser, serialize
 from nncompress.backend.tensorflow_ import DifferentiableGate
 
+class StopGradientLayer(tf.keras.layers.Layer):
+    
+    def __init__(self, name=None):
+        super(StopGradientLayer, self).__init__(name=name)
+
+    def call(self, inputs, training=None):
+        return tf.stop_gradient(inputs)
+
+    def get_config(self):
+        return {
+            "name":self.name
+        }
+
 class PruningNNParser(NNParser):
     """NNParser is a tool for enabling differentiable pruning.
    
@@ -298,7 +311,8 @@ class PruningNNParser(NNParser):
             modifier_dict = serialize(modifier)
             model_dict["config"]["layers"].append(modifier_dict)
 
-            stop_gradient = Lambda(lambda x: tf.stop_gradient(x), name=self.get_id("stop_gradient"))
+            #stop_gradient = Lambda(lambda x: tf.stop_gradient(x), name=self.get_id("stop_gradient"))
+            stop_gradient = StopGradientLayer(name=self.get_id("stop_gradient"))
             stop_gradient_dict = serialize(stop_gradient)
             model_dict["config"]["layers"].append(stop_gradient_dict)
 
@@ -312,7 +326,7 @@ class PruningNNParser(NNParser):
         self.traverse(node_callbacks=[modify_output])
 
         model_json = json.dumps(model_dict)
-        custom_objects = {self._gate_class.__name__:self._gate_class}
+        custom_objects = {self._gate_class.__name__:self._gate_class, "StopGradientLayer":StopGradientLayer}
         custom_objects.update(self._custom_objects)
         ret = tf.keras.models.model_from_json(model_json, custom_objects=custom_objects)
         for layer in self._model.layers:
