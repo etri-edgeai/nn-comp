@@ -193,6 +193,30 @@ class PruningNNParser(NNParser):
                         inbound[1] = target[1]
                         inbound[2] = target[2]
 
+    def get_first_activation(self, node_name):
+        
+        act = []
+        def act_mapping(n, level):
+            node_data = self._graph.nodes(data=True)[n]
+            if node_data["layer_dict"]["class_name"] == "Activation" and len(act) == 0:
+                act.append(node_data["layer_dict"]["config"]["name"])
+        
+        def stop(n, is_edge=False):
+            if len(n) > 2:
+                return False
+
+            n, level = n
+            if len(act) > 0:
+                return True
+            else:
+                return False
+
+        sources = [ (node_name, self._graph.nodes(data=True)[node_name]) ]
+        self.traverse(sources=sources, node_callbacks=[act_mapping], stopping_condition=stop)
+
+        return act[0]
+
+
     def inject(self, avoid=None, with_mapping=False, with_splits=False):
         """This function injects differentiable gates into the model.
 

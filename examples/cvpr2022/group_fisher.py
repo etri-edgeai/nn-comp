@@ -353,18 +353,20 @@ def make_group_fisher(model,
         layer.name for layer in model.layers if "Conv2D" in layer.__class__.__name__
     ]
 
+
     blocks = [[]]
     current_id = 0
     for i, (g, idx) in enumerate(ordered_groups):
 
-        des = parser.first_common_descendant(list(g), joints)
+        #des = parser.first_common_descendant(list(g), joints)
+        des = parser.first_common_descendant(list(g), convs)
 
         blocks[current_id].append((g, des))
         if len(blocks[current_id]) >= len(ordered_groups) // num_blocks and current_id != num_blocks-1:
             current_id += 1
             blocks.append([])
 
-    return gmodel, model, blocks, ordered_groups, parser, PruningCallback(
+    return gmodel, model, blocks, ordered_groups, parser, torder, PruningCallback(
         norm,
         targets,
         gate_groups=groups,
