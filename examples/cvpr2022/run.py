@@ -512,6 +512,7 @@ def prune(dataset, model, model_handler, position_mode, with_label=False, label_
 
     cmodel = parser.cut(gmodel)
     print(cmodel.count_params())
+    print(validate(cmodel))
 
     optimizer = tf.keras.optimizers.Adam(lr=0.0001)
     if not curl:
@@ -627,9 +628,9 @@ def prune(dataset, model, model_handler, position_mode, with_label=False, label_
     profile = model_profiler.model_profiler(cmodel, 1)
     print(profile)
     if label_only:
-        postfix = "_"+str(position_mode)+"_"+dataset+"_"+str(with_label)+"_gf"
+        postfix = "_"+str(position_mode)+"_"+dataset+"_"+str(with_label)+"_gf_"+str(target_ratio)
     elif curl:
-        postfix = "_"+str(position_mode)+"_"+dataset+"_"+str(with_label)+"_curl"
+        postfix = "_"+str(position_mode)+"_"+dataset+"_"+str(with_label)+"_curl_"+str(target_ratio)
     else:
         postfix = "_"+str(position_mode)+"_"+dataset+"_"+str(with_label)+"_ours"+"_"+str(num_blocks)+"_"+str(target_ratio)
     tf.keras.models.save_model(cmodel, "compressed_models/"+model_handler.get_name()+postfix+".h5")
