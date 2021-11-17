@@ -223,7 +223,7 @@ def decompose(model, targets, decomposed, custom_objects=None):
             ret.get_layer(name).set_weights((weight,))
     return ret, replace_mappings
 
-def add_prefix(model, prefix, val_check=None):
+def add_prefix(model, prefix, custom_objects=None, val_check=None):
     model_dict = json.loads(model.to_json())
     model_dict["config"]["name"] = prefix + model_dict["config"]["name"]
     for layer in model_dict["config"]["layers"]:
@@ -239,11 +239,11 @@ def add_prefix(model, prefix, val_check=None):
         output_layer[0] = prefix + output_layer[0]
 
     model_json = json.dumps(model_dict)
-    ret = tf.keras.models.model_from_json(model_json)
+    ret = tf.keras.models.model_from_json(model_json, custom_objects=custom_objects)
     for layer in model.layers:
         ret.get_layer(prefix+layer.name).set_weights(layer.get_weights())
 
-    if val_check != False:
+    if val_check is not None:
         data = np.random.rand(*val_check)
         left = model(data)
         right = ret(data)

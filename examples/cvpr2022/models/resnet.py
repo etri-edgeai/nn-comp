@@ -307,7 +307,7 @@ def compile(model, run_eagerly=True):
     optimizer = Adam(lr=lr_schedule(0))
     model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['accuracy'], run_eagerly=run_eagerly)
 
-def get_callbacks():
+def get_callbacks(nstep):
     #reducing learning rate on plateau
     lr_scheduler = LearningRateScheduler(lr_schedule)
     rlrop = ReduceLROnPlateau(monitor='val_loss', mode='min', patience= 5, factor= 0.5, min_lr= 1e-6, verbose=1)

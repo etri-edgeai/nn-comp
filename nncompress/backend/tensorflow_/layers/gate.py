@@ -57,16 +57,25 @@ class SimplePruningGate(layers.Layer, SimplePruningGateFormula):
 
         self.grad_holder = []
         self.collecting = True
+        self.data_collecting = False
+        self.freeze = False
 
         @tf.custom_gradient
         def grad_tracker(x):
             def custom_grad(dy, variables):
-                if self.collecting:
+                if self.collecting and not self.freeze:
                     self.grad_holder.append(\
-                        tf.reduce_mean(tf.pow(tf.reduce_sum(dy * x, axis=[1, 2]), 2), axis=0) / 2.0)
+                        tf.reduce_sum(dy * x, axis=[1, 2]))
                 return self.compute(dy), [ tf.zeros(self.ngates,) ]
             return self.compute(x), custom_grad
         self.grad_tracker = grad_tracker
+
+        self.data_holder = []
+        def data_tracker(x):
+            if self.data_collecting and not self.freeze:
+                self.data_holder.append(x)
+            return x
+        self.data_tracker = data_tracker
 
     def build(self, input_shape):
         self.gates = self.add_weight(name='gates',
@@ -76,7 +85,7 @@ class SimplePruningGate(layers.Layer, SimplePruningGateFormula):
         super(SimplePruningGate, self).build(input_shape)
 
     def call(self, input):
-        return self.grad_tracker(input), self.binary_selection()
+        return self.grad_tracker(self.data_tracker(input)), self.binary_selection()
 
     def compute_output_shape(self, input_shape):
         return (input_shape[0], self.ngates)

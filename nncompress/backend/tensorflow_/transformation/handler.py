@@ -78,6 +78,19 @@ class Conv2DHandler(LayerHandler):
         layer_dict["config"]["filters"] = new_weights[0].shape[-1]
         return
 
+class WeightedSumHandler(LayerHandler):
+
+    @staticmethod
+    def is_transformer(tensor_idx):
+        return False
+
+    @staticmethod
+    def cut_weights(W, in_gate, out_gate):
+        ret = []
+        for w in W:
+            ret.append(w)
+        return ret
+
 class DenseHandler(LayerHandler):
     
     @staticmethod
@@ -124,6 +137,28 @@ class DWConv2DHandler(LayerHandler):
             if len(w.shape) == 4:
                 w_ = cut(copy.deepcopy(w), out_gate, None)
             else:
+                w_ = cut(copy.deepcopy(w), in_gate, out_gate)
+            ret.append(w_)
+        return ret
+
+class SeparableConv2DHandler(LayerHandler):
+
+    @staticmethod
+    def is_transformer(tensor_idx):
+        return True
+
+    @staticmethod
+    def update_layer_schema(layer_dict, new_weights, input_gate, output_gate):
+        layer_dict["config"]["filters"] = new_weights[1].shape[-1]
+        return
+
+    @staticmethod
+    def cut_weights(W, in_gate, out_gate):
+        ret = []
+        for idx, w in enumerate(W):
+            if idx == 0: # Depth-wise
+                w_ = cut(copy.deepcopy(w), in_gate, None)
+            else: # Point-wise
                 w_ = cut(copy.deepcopy(w), in_gate, out_gate)
             ret.append(w_)
         return ret
@@ -177,5 +212,7 @@ LAYER_HANDLERS = {
     "DepthwiseConv2D": DWConv2DHandler,
     "Concatenate": ConcatHandler,
     "Flatten": FlattenHandler,
-    "Reshape": ReshapeHandler
+    "Reshape": ReshapeHandler,
+    "SeparableConv2D": SeparableConv2DHandler,
+    "WeightedSum":WeightedSumHandler
 }

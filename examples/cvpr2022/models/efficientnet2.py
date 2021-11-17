@@ -21,7 +21,7 @@ def get_batch_size(dataset):
     return batch_size
 
 def get_name():
-    return "efnet"
+    return "efnet2"
 
 def preprocess_func(img, shape):
     img = img.astype(np.float32)/255.
@@ -29,12 +29,12 @@ def preprocess_func(img, shape):
     return img
 
 def get_model(dataset, n_classes=100):
-    efnb0 = efn.EfficientNetB0(weights='imagenet', include_top=False, input_shape=input_shape, classes=n_classes)
+    efnb0 = efn.EfficientNetB2(weights='imagenet', include_top=False, input_shape=input_shape, classes=n_classes)
     model = Sequential()
     model.add(efnb0)
     model.add(GlobalAveragePooling2D())
     if dataset == "cifar100":
-        model.add(Dropout(0.5))
+        model.add(Dropout(0.75))
     else:
         model.add(Dropout(0.25))
     model.add(Dense(n_classes, activation='softmax'))
@@ -55,8 +55,5 @@ def get_callbacks(nsteps=0):
 def get_custom_objects():
     return None
 
-def get_train_epochs(finetune=False):
-    if finetune:
-        return 50
-    else:
-        return 100
+def get_train_epochs():
+    return 100

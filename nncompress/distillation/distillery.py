@@ -63,7 +63,7 @@ class Distillery(object):
                 name, flow_idx, tensor_idx = s_item 
                 tensors = student.get_layer(name).outbound_nodes[flow_idx].output_tensors
                 if type(tensors) != tf.Tensor:
-                    tensors = tensor[tensor_idx]
+                    tensors = tensors[tensor_idx]
                 s_tensors.append(tensors)
 
             if len(t_tensors) == 1:
