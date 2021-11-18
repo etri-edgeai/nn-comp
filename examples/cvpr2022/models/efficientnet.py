@@ -8,6 +8,7 @@ import numpy as np
 import cv2
 
 import efficientnet.tfkeras as efn
+from efficientnet.keras import center_crop_and_resize, preprocess_input
 
 height = 224
 width = 224
@@ -26,19 +27,25 @@ def get_name():
 def preprocess_func(img, shape):
     img = img.astype(np.float32)/255.
     img = cv2.resize(img, shape, interpolation=cv2.INTER_CUBIC)
+    #img = preprocess_input(img)
+    #img = tf.image.resize(img, (height, width))
     return img
 
 def get_model(dataset, n_classes=100):
-    efnb0 = efn.EfficientNetB0(weights='imagenet', include_top=False, input_shape=input_shape, classes=n_classes)
-    model = Sequential()
-    model.add(efnb0)
-    model.add(GlobalAveragePooling2D())
-    if dataset == "cifar100":
-        model.add(Dropout(0.5))
+    if dataset == "imagenet":
+        efnb0 = efn.EfficientNetB0(weights='imagenet', include_top=True, input_shape=input_shape, classes=n_classes)
+        return efnb0
     else:
-        model.add(Dropout(0.25))
-    model.add(Dense(n_classes, activation='softmax'))
-    return model
+        efnb0 = efn.EfficientNetB0(weights='imagenet', include_top=False, input_shape=input_shape, classes=n_classes)
+        model = Sequential()
+        model.add(efnb0)
+        model.add(GlobalAveragePooling2D())
+        if dataset == "cifar100":
+            model.add(Dropout(0.5))
+        else:
+            model.add(Dropout(0.25))
+        model.add(Dense(n_classes, activation='softmax'))
+        return model
 
 def compile(model, run_eagerly=False):
     optimizer = Adam(lr=0.0001)
