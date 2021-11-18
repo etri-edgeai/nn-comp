@@ -238,7 +238,7 @@ def prune(dataset, model, model_handler, position_mode, with_label=False, label_
     ]
 
     all_acts_ = [
-        layer.name for layer in copied_model.layers if "Activation" in layer.__class__.__name__
+        layer.name for layer in copied_model.layers if layer.__class__.__name__ in ["Activation", "ReLU", "Softmax"]
     ]
 
 
@@ -341,7 +341,7 @@ def prune(dataset, model, model_handler, position_mode, with_label=False, label_
 
     elif position_mode == 8:
         alll_ = [
-            (c, torder[c]) for c in all_ if gmodel.get_layer(c).__class__.__name__ == "Activation"
+            (c, torder[c]) for c in all_ if gmodel.get_layer(c).__class__.__name__ in ["Activation", "ReLU", "Softmax"]
         ]
         node_list = sorted(alll_, key=lambda x: x[1])
 
