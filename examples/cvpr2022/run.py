@@ -50,7 +50,7 @@ def load_data(dataset, model_handler, training_augment=True, batch_size=-1, n_cl
         import sys
         sys.path.insert(0, "/home/jongryul/work/keras_imagenet")
         from utils.dataset import get_dataset
-        dataset_dir = "/ssd_data2/jongryul/tf"
+        dataset_dir = "/ssd_data/jongryul/tf"
         ds_train = get_dataset(dataset_dir, 'train', batch_size_)
         ds_val = get_dataset(dataset_dir, 'validation', batch_size_)
         train_examples = 1281167
@@ -660,6 +660,8 @@ def run():
     from loader import get_model_handler
     model_handler = get_model_handler(args.model_name)
 
+    from pathset import paths
+
     if args.dataset == "cifar100":
         n_classes = 100
     elif args.dataset == "caltech_birds2011":
@@ -685,7 +687,17 @@ def run():
         model = model_handler.get_model(dataset, n_classes=n_classes)
         train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes)
     elif args.mode == "prune":
-        model = tf.keras.models.load_model(args.model_path, custom_objects=model_handler.get_custom_objects())
+
+        if args.model_path is None:
+            model_path = paths[args.dataset][args.model_name]
+        else:
+            model_path = args.model_path
+
+        if args.dataset != "imagenet":
+            model = tf.keras.models.load_model(model_path, custom_objects=model_handler.get_custom_objects())
+        else:
+            model = model_handler.get_model(dataset, n_classes=n_classes)
+
         prune(
             dataset,
             model,
@@ -700,6 +712,7 @@ def run():
             finetune=args.finetune,
             n_classes=n_classes,
             num_blocks=args.num_blocks)
+
 
 if __name__ == "__main__":
     run()
