@@ -198,7 +198,7 @@ class PruningNNParser(NNParser):
         act = []
         def act_mapping(n, level):
             node_data = self._graph.nodes(data=True)[n]
-            if node_data["layer_dict"]["class_name"] == "Activation" and len(act) == 0:
+            if node_data["layer_dict"]["class_name"] in ["Activation", "ReLU", "Softmax"] and len(act) == 0:
                 act.append(node_data["layer_dict"]["config"]["name"])
         
         def stop(n, is_edge=False):
