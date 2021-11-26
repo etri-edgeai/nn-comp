@@ -24,7 +24,7 @@ paths = {
         "efnet2":"trained_models/efnet2_oxford_iiit_pet_model.023.h5",
         "mobilenetv2":"trained_models/mobilenetv2_oxford_iiit_pet_model.061.h5",
         "densenet121":"trained_models/densenet121_oxford_iiit_pet_model.083.h5",
-        "resnet50": "trained_models/resnet50_oxford_iiit_pet_model.096.h5"
+        "resnet50": "trained_models/resnet50_oxford_iiit_pet_model.086.h5"
     },
 
     "cars196": {
@@ -44,16 +44,5 @@ paths = {
         "densenet121":"trained_models/densenet121_stanford_dogs_model.041.h5",
         "resnet50": "trained_models/resnet50_stanford_dogs_model.053.h5"
     },
-
-    "imagenet": {
-        "efnet":"trained_models/efnet_stanford_dogs_model.084.h5",
-        "efnet1":"trained_models/efnet1_stanford_dogs_model.052.h5",
-        "efnet2":"trained_models/efnet2_stanford_dogs_model.023.h5",
-        "mobilenetv2":"trained_models/mobilenetv2_stanford_dogs_model.037.h5",
-        "densenet121":"trained_models/densenet121_stanford_dogs_model.041.h5",
-        "resnet50": "trained_models/resnet50_stanford_dogs_model.053.h5"
-    },
-
-
 
 }
