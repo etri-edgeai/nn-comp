@@ -50,7 +50,7 @@ def load_data(dataset, model_handler, training_augment=True, batch_size=-1, n_cl
         import sys
         sys.path.insert(0, "/home/jongryul/work/keras_imagenet")
         from utils.dataset import get_dataset
-        dataset_dir = "/ssd_data/jongryul/tf"
+        dataset_dir = "/ssd_data2/jongryul/tf"
         ds_train = get_dataset(dataset_dir, 'train', batch_size_)
         ds_val = get_dataset(dataset_dir, 'validation', batch_size_)
         train_examples = 1281167
@@ -479,6 +479,10 @@ def prune(dataset, model, model_handler, position_mode, with_label=False, label_
         while float(n_removed) / n_channels < target_ratio:
             if n_removed % 100 == 0:
                 print(float(n_removed) / n_channels)
+                cmodel = parser.cut(gmodel)
+                postfix = "_"+str(position_mode)+"_"+dataset+"_"+str(with_label)+"_curl_"+str(n_removed)
+                tf.keras.models.save_model(cmodel, "compressed_models/"+model_handler.get_name()+postfix+".h5")
+                print(postfix)
 
             val = find_min(score, gates_info, n_channels_group, n_removed_group, len(gates_info))
             local_base = 0
