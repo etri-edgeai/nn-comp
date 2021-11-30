@@ -47,6 +47,9 @@ def get_model(dataset, n_classes=100):
         model.add(Dense(n_classes, activation='softmax'))
         return model
 
+def get_optimizer():
+    return Adam(lr=0.0001)
+
 def compile(model, run_eagerly=False):
     optimizer = Adam(lr=0.0001)
     model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['accuracy'], run_eagerly=run_eagerly)

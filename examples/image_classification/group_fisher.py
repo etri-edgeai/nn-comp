@@ -13,9 +13,9 @@ from numpy.linalg import norm as npnorm
 
 from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
 from nncompress.backend.tensorflow_ import SimplePruningGate, DifferentiableGate
-
 from nncompress.backend.tensorflow_.transformation import parse, inject, cut, unfold
 
+from train import train_step
 
 def find_all(model, Target):
     ret = []
@@ -27,32 +27,14 @@ def find_all(model, Target):
                 ret.append(layer)
     return ret
 
-def find_all_dict(model_dict, target):
-    ret = []
-    for layer in model_dict["config"]["layers"]:
-        if "layers" in layer["config"]:
-            ret += find_all_dict(layer, target)
-        else:
-            if layer["class_name"] == target:
-                ret.append(layer)
-    return ret
-
-def compute_sparsity(groups, target_gidx=-1):
+def compute_sparsity(groups):
     sum_ = 0
     alive = 0
     for gidx, group in enumerate(groups):
-        if target_gidx != -1 and target_gidx != gidx:
-            continue
         g = group[0]
         sum_ += g.ngates
         alive += np.sum(g.gates.numpy())
     return 1.0 - alive / sum_
-
-def compute_grad_score(gate_layer):
-    sum_ = 0
-    for grad in gate_layer.grad_holder:
-        sum_ += grad * grad
-    return tf.reduce_sum(sum_, axis=0)
 
 @njit
 def find_min(cscore, gates, min_val, min_idx, gidx, ncol):
@@ -71,8 +53,6 @@ class PruningCallback(keras.callbacks.Callback):
                  gate_groups=None,
                  target_ratio=0.5,
                  period=10,
-                 target_gidx=-1,
-                 target_idx=-1,
                  l2g = None,
                  num_remove=1,
                  fully_random=False,
@@ -84,8 +64,6 @@ class PruningCallback(keras.callbacks.Callback):
         self.target_ratio = target_ratio
         self.continue_pruning = True
         self.gate_groups = gate_groups
-        self.target_idx = target_idx
-        self.target_gidx = target_gidx
         self._iter = 0
         self.l2g = l2g
         self.num_remove = num_remove
@@ -108,20 +86,8 @@ class PruningCallback(keras.callbacks.Callback):
                 ]
 
             cscore_ = {}
-            frozen = {}
             #groups.reverse()
             for gidx, group in enumerate(groups):
-                if self.target_gidx != -1 and gidx != self.target_gidx: # only consider target_gidx
-                    continue
-
-                is_frozen = False
-                for lidx, layer in enumerate(group):
-                    if layer.freeze:
-                        is_frozen = True
-                        break
-                if is_frozen:
-                    frozen[gidx] = True
-                    continue
 
                 # compute grad based si
                 num_batches = len(group[0].grad_holder)
@@ -130,9 +96,6 @@ class PruningCallback(keras.callbacks.Callback):
                 for bidx in range(num_batches):
                     grad = 0
                     for lidx, layer in enumerate(group):
-                        if self.target_idx != -1 and lidx != self.target_idx:
-                            continue
-
                         gates_ = layer.gates.numpy()
                         if np.sum(gates_) < 2.0: # min channels.
                             break
@@ -149,8 +112,6 @@ class PruningCallback(keras.callbacks.Callback):
                 # compute normalization
                 norm_ = 0
                 for lidx, layer in enumerate(group):
-                    if self.target_idx != -1 and lidx != self.target_idx:
-                        continue
 
                     gates_ = layer.gates.numpy()
                     if np.sum(gates_) < 2.0: # min channels.
@@ -175,11 +136,6 @@ class PruningCallback(keras.callbacks.Callback):
                 min_val = -1
                 min_idx = (-1, -1)
                 for gidx, group in enumerate(groups):
-                    if self.target_gidx != -1 and gidx != self.target_gidx: # only consider target_gidx
-                        continue
-
-                    if gidx in frozen:
-                        continue
 
                     cscore = cscore_[gidx]
                     gates_ = group[0].gates.numpy()
@@ -197,16 +153,17 @@ class PruningCallback(keras.callbacks.Callback):
                     gates_[min_idx[1]] = 0.0
                     min_layer.gates.assign(gates_)
 
-                if compute_sparsity(groups, self.target_gidx) >= self.target_ratio:
+                if compute_sparsity(groups) >= self.target_ratio:
                     break
 
-            print("SPARSITY:", compute_sparsity(groups, self.target_gidx))
-            collecting = compute_sparsity(groups, self.target_gidx) < self.target_ratio
-            self.continue_pruning = collecting
+            print("SPARSITY:", compute_sparsity(groups))
+            self.continue_pruning = compute_sparsity(groups) < self.target_ratio
             for layer in self.targets:
                 layer.grad_holder = []
-                layer.collecting = collecting
+                if not self.continue_pruning:
+                    layer.collecting = False
 
+            # for fit
             if not self.continue_pruning and hasattr(self, "model") and hasattr(self.model, "stop_training"):
                 self.model.stop_training = True
             return True
@@ -238,43 +195,22 @@ def compute_act(layer, batch_size, is_input_gate=False):
         else:
             return 0.0
 
-def make_group_fisher(model,
-                      model_handler,
-                      batch_size,
-                      custom_objects=None,
-                      avoid=None,
-                      period=25,
-                      target_ratio=0.5,
-                      enable_norm=True,
-                      target_gidx=-1,
-                      target_idx=-1,
-                      num_remove=1,
-                      num_blocks=3,
-                      fully_random=False,
-                      logging=False):
-    """
 
-    """
+def add_gates(model, custom_objects=None, avoid=None):
+
     model = unfold(model, custom_objects)
     parser = PruningNNParser(model, custom_objects=custom_objects, gate_class=SimplePruningGate)
     parser.parse()
 
     gmodel, gate_mapping = parser.inject(avoid=avoid, with_mapping=True, with_splits=True)
-    tf.keras.utils.plot_model(model, "ddd.png")
-    tf.keras.utils.plot_model(gmodel, "ggg.png")
-
-    targets = find_all(gmodel, SimplePruningGate)
-    targets_ = set([target.name+"/gates:0" for target in targets])
-    gmodel.grad_holder = []
+    #tf.keras.utils.plot_model(model, "ddd.png")
+    #tf.keras.utils.plot_model(gmodel, "ggg.png")
 
     v = parser.traverse()
     torder = {
         name:idx
         for idx, (name, _) in enumerate(v)
     }
-
-    gmodel_dict = json.loads(gmodel.to_json())
-    gates_dict = find_all_dict(gmodel_dict, "SimplePruningGate")
 
     def compare_key(x):
         id_ = x.name.split("_")[-1]
@@ -298,6 +234,200 @@ def make_group_fisher(model,
         #ordered_groups.append((g, torder[g_[0]]))
     ordered_groups = sorted(ordered_groups, key=lambda x: x[1])[:-1] # remove last
 
+    return gmodel, model, l2g, ordered_groups, torder, parser, gate_mapping
+
+
+def compute_positions(model, ordered_groups, torder, parser, position_mode, num_blocks):
+
+    convs = [
+        layer.name for layer in model.layers if "Conv2D" in layer.__class__.__name__
+    ]
+
+    blocks = [[]]
+    current_id = 0
+    for i, (g, idx) in enumerate(ordered_groups):
+
+        #des = parser.first_common_descendant(list(g), joints)
+        des = parser.first_common_descendant(list(g), convs)
+        blocks[current_id].append((g, des))
+        if len(blocks[current_id]) >= len(ordered_groups) // num_blocks and current_id != num_blocks-1:
+            current_id += 1
+            blocks.append([])
+
+    # compute positions
+    convs = [
+        layer.name for layer in model.layers if "Conv2D" in layer.__class__.__name__
+    ]
+    all_ = [
+        layer.name for layer in model.layers
+    ]
+
+    all_acts_ = [
+        layer.name for layer in model.layers if layer.__class__.__name__ in ["Activation", "ReLU", "Softmax"]
+    ]
+
+    if position_mode == 0:
+        positions = all_acts_
+
+    elif position_mode == 4: # 1x1 conv
+        positions = []
+        for c in convs:
+            if gmodel.get_layer(c).kernel_size == (1,1):
+                positions.append(c)
+    elif position_mode == 1: # joints
+        positions = []
+        for b in blocks:
+            act = parser.get_first_activation(b[-1][1])
+            if act not in positions:
+                positions.append(act)
+
+    elif position_mode == 2: # random
+        positions = [
+            all_acts_[int(random.random() * len(all_acts_))] for i in range(len(blocks))
+        ]
+
+    elif position_mode == 3: # cut
+        positions  = []
+        for b in blocks:
+            g = b[-1][0]
+            des = parser.first_common_descendant(list(g), all_acts_, False)
+
+            if des not in positions:
+                positions.append(des)
+            """
+            des_g = None
+            for g_, idx in ordered_groups:
+                if des in g_:
+                    des_g = g_
+                    break
+
+            if des_g is not None:
+                for l in des_g:
+                    if l not in positions:
+                        positions.append(l)
+            else:
+                if des not in positions:
+                    positions.append(des) # maybe the last transforming layer.
+            """
+
+    elif position_mode == 5: # cut
+        affecting_layers = parser.get_affecting_layers()
+
+        cnt = {}
+        for layer_ in affecting_layers:
+            for a in affecting_layers[layer_]:
+                if a[0] not in cnt:
+                    cnt[a[0]] = 0
+                cnt[a[0]] += 1
+
+        node_list = [
+            (key, value) for key, value in  cnt.items()
+        ]
+        node_list = sorted(node_list, key=lambda x: x[1])
+
+        k = 5
+        positions = [
+            parser.get_first_activation(n) for n, _ in node_list[-1*k:]
+        ]
+
+    elif position_mode == 6: # cut
+        affecting_layers = parser.get_affecting_layers()
+
+        cnt = {
+            layer_[0]:0 for layer_ in affecting_layers
+        }
+        for layer_ in affecting_layers:
+            cnt[layer_[0]] = len(affecting_layers[layer_])
+
+        node_list = [
+            (key, value) for key, value in  cnt.items()
+        ]
+        node_list = sorted(node_list, key=lambda x: x[1])
+
+        k = 5
+        positions = [
+            parser.get_first_activation(n) for n, _ in node_list[-1*k:]
+        ]
+
+    elif position_mode == 7:
+
+        cons_ = [
+            (c, torder[c]) for c in convs
+        ]
+
+        node_list = sorted(cons_, key=lambda x: x[1])
+
+        k = 5
+        positions = [
+            n for n, _ in node_list[-1*k:]
+        ]
+
+    elif position_mode == 8:
+        alll_ = [
+            (c, torder[c]) for c in all_ if gmodel.get_layer(c).__class__.__name__ in ["Activation", "ReLU", "Softmax"]
+        ]
+        node_list = sorted(alll_, key=lambda x: x[1])
+
+        k = 5
+        positions = [
+            n for n, _ in node_list[-1*k:]
+        ]
+        print(node_list)
+
+    elif position_mode == 9:
+        alll_ = [
+            (c, torder[c]) for c in all_
+        ]
+        node_list = sorted(alll_, key=lambda x: x[1])
+
+        k = 5
+        positions = [
+            n for n, _ in node_list[-1*k:]
+        ]
+        print(node_list)
+
+    elif position_mode == 10: # cut
+        positions  = []
+        for b in blocks:
+            g = b[-1][0]
+            des = parser.first_common_descendant(list(g), convs, False)
+
+            des_g = None
+            for g_, idx in ordered_groups:
+                if des in g_:
+                    des_g = g_
+                    break
+
+            if des_g is not None:
+                des = parser.first_common_descendant(list(des_g), all_acts_, False)
+                if des not in positions:
+                    positions.append(des)
+            else:
+                act = parser.get_first_activation(des)
+                if act is None:
+                    act = des
+                if act not in positions:
+                    positions.append(act) # maybe the last transforming layer.
+
+    return positions
+
+def make_group_fisher(model,
+                      model_handler,
+                      batch_size,
+                      custom_objects=None,
+                      avoid=None,
+                      period=25,
+                      target_ratio=0.5,
+                      enable_norm=True,
+                      num_remove=1,
+                      num_blocks=3,
+                      position_mode=0,
+                      fully_random=False,
+                      logging=False):
+
+    gmodel, model, l2g, ordered_groups, torder, parser, gate_mapping = add_gates(model, custom_objects, avoid)
+    targets = find_all(gmodel, SimplePruningGate)
+
     groups = []
     for g, _ in ordered_groups:
         gate_group = []
@@ -305,24 +435,11 @@ def make_group_fisher(model,
             gate_group.append(gmodel.get_layer(l2g[l]))
         groups.append(gate_group)
 
-    if target_gidx != -1:
-        gidx_ = 0
-        for gidx, g in enumerate(groups):
-            if len(g) > 1:
-                if gidx_ == target_gidx:
-                    target_gidx = gidx
-                    break
-                gidx_ += 1
-        print("TARGET: ", [layer.name for layer in groups[target_gidx]], target_gidx)
-
-
-    model_handler.initial_lr = 0.001
-
+    # Compute normalization score
     if enable_norm:
-        # Compute normalization score
         norm = {
-            gate_dict["name"]: 0.0
-            for gate_dict in gates_dict
+            t.name: 0.0
+            for t in targets
         }
         def compute_norm(n, level, parser):
             # Handling input gates
@@ -343,38 +460,43 @@ def make_group_fisher(model,
             norm[key] = float(max(val, 1.0)) / 1e6
     else:
         norm = {
-            gate_dict["name"]: 1.0
-            for gate_dict in gates_dict
+            t.name: 1.0
+            for t in targets
         }
 
-    joints = parser.get_joints()
+    #joints = parser.get_joints()
+    positions = compute_positions(model, ordered_groups, torder, parser, position_mode, num_blocks)
 
-    convs = [
-        layer.name for layer in model.layers if "Conv2D" in layer.__class__.__name__
-    ]
+    # ready for collecting
+    for layer in gmodel.layers:
+        if layer.__class__ == SimplePruningGate:
+            layer.grad_holder = []
+            layer.collecting = False
 
-
-    blocks = [[]]
-    current_id = 0
-    for i, (g, idx) in enumerate(ordered_groups):
-
-        #des = parser.first_common_descendant(list(g), joints)
-        des = parser.first_common_descendant(list(g), convs)
-
-        blocks[current_id].append((g, des))
-        if len(blocks[current_id]) >= len(ordered_groups) // num_blocks and current_id != num_blocks-1:
-            current_id += 1
-            blocks.append([])
-
-    return gmodel, model, blocks, ordered_groups, parser, torder, PruningCallback(
+    return gmodel, model, parser, positions, PruningCallback(
         norm,
         targets,
         gate_groups=groups,
         period=period,
         target_ratio=target_ratio,
-        target_gidx=target_gidx,
-        target_idx=target_idx,
         l2g=l2g,
         num_remove=num_remove,
         fully_random=fully_random,
         logging=logging)
+
+
+def prune_step(X, model, teacher_logits, y, pc):
+
+    for layer in model.layers:
+        if layer.__class__ == SimplePruningGate:
+            layer.trainable = True
+            layer.collecting = True
+
+    tape, loss = train_step(X, model, teacher_logits, y)
+    _ = tape.gradient(loss, model.trainable_variables)
+    pruned = pc.on_train_batch_end(None)
+
+    for layer in model.layers:
+        if layer.__class__ == SimplePruningGate:
+            layer.trainable = False
+            layer.collecting = False
