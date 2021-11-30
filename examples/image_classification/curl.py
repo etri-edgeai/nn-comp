@@ -1,6 +1,9 @@
 
 import tensorflow as tf
 
+from numba import jit
+
+@jit
 def find_min(score, gates_info, n_channels_group, n_removed_group, ngates):
     idx = 0
     min_score = score[0]
@@ -23,7 +26,7 @@ def find_min(score, gates_info, n_channels_group, n_removed_group, ngates):
 
     return idx
 
-def apply_curl(train_data_generator, teacher, gated_model, groups, parser, save_path):
+def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, target_ratio, save_dir, save_prefix, save_step):
 
     print("collecting...")
     data = []
@@ -84,9 +87,13 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, parser, save_
     ]
 
     while float(n_removed) / n_channels < target_ratio:
-        if n_removed % 100 == 0:
+        if n_removed % save_step == 0:
+            for key in gates_weights:
+                layer = gated_model.get_layer(key)
+                layer.gates.assign(gates_weights[key])
+
             cmodel = parser.cut(gated_model)
-            tf.keras.models.save_model(cmodel, "compressed_models/"+model_handler.get_name()+postfix+".h5")
+            tf.keras.models.save_model(cmodel, save_dir+"/"+save_prefix+"_"+str(n_removed)+".h5")
 
         val = find_min(score, gates_info, n_channels_group, n_removed_group, len(gates_info))
         local_base = 0

@@ -56,6 +56,7 @@ class PruningCallback(keras.callbacks.Callback):
                  l2g = None,
                  num_remove=1,
                  fully_random=False,
+                 callback_after_deletion=None,
                  logging=False):
         super(PruningCallback, self).__init__()
         self.norm = norm
@@ -65,9 +66,11 @@ class PruningCallback(keras.callbacks.Callback):
         self.continue_pruning = True
         self.gate_groups = gate_groups
         self._iter = 0
+        self._num_removed = 0
         self.l2g = l2g
         self.num_remove = num_remove
         self.fully_random = fully_random
+        self.callback_after_deletion = callback_after_deletion
         self.logging = logging
         if self.logging:
             self.logs = []
@@ -152,6 +155,11 @@ class PruningCallback(keras.callbacks.Callback):
                     gates_ = min_layer.gates.numpy()
                     gates_[min_idx[1]] = 0.0
                     min_layer.gates.assign(gates_)
+
+                self._num_removed += 1
+
+                if self.callback_after_deletion is not None:
+                   self.callback_after_deletion(self._num_removed)
 
                 if compute_sparsity(groups) >= self.target_ratio:
                     break
@@ -423,6 +431,9 @@ def make_group_fisher(model,
                       num_blocks=3,
                       position_mode=0,
                       fully_random=False,
+                      save_step=-1,
+                      save_prefix=None,
+                      save_dir=None,
                       logging=False):
 
     gmodel, model, l2g, ordered_groups, torder, parser, gate_mapping = add_gates(model, custom_objects, avoid)
@@ -473,6 +484,18 @@ def make_group_fisher(model,
             layer.grad_holder = []
             layer.collecting = False
 
+    def callback_after_deletion_(num_removed):
+        if num_removed % save_step == 0:
+            assert save_dir is not None
+            assert save_prefix is not None
+            cmodel = parser.cut(gmodel)
+            tf.keras.models.save_model(cmodel, save_dir+"/"+save_prefix+"_"+str(num_removed)+".h5")
+
+    if save_step == -1:
+        cbk = None
+    else:
+        cbk = callback_after_deletion_
+
     return gmodel, model, parser, positions, PruningCallback(
         norm,
         targets,
@@ -482,6 +505,7 @@ def make_group_fisher(model,
         l2g=l2g,
         num_remove=num_remove,
         fully_random=fully_random,
+        callback_after_deletion=cbk,
         logging=logging)
 
 

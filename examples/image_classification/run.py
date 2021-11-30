@@ -31,7 +31,14 @@ from loader import get_model_handler
 
 from train import load_data, train, iteration_based_train
 
-def prune(dataset, model, model_handler, position_mode, with_label=False, label_only=False, distillation=True, fully_random=False, num_remove=1, target_ratio=0.5, curl=False, finetune=False, n_classes=100, num_blocks=3):
+def prune(dataset, model, model_handler, position_mode, with_label=False, label_only=False, distillation=True, fully_random=False, num_remove=1, target_ratio=0.5, curl=False, finetune=False, n_classes=100, num_blocks=3, save_dir="", save_step=-1):
+
+    if label_only:
+        postfix = "_"+str(position_mode)+"_"+dataset+"_"+str(with_label)+"_gf_"+str(target_ratio)
+    elif curl:
+        postfix = "_"+str(position_mode)+"_"+dataset+"_"+str(with_label)+"_curl_"+str(target_ratio)
+    else:
+        postfix = "_"+str(position_mode)+"_"+dataset+"_"+str(with_label)+"_ours"+"_"+str(num_blocks)+"_"+str(target_ratio)
 
     _, _, test_data_gen = load_data(dataset, model_handler, batch_size=model_handler.batch_size, n_classes=n_classes)
     def validate(model_):
@@ -47,7 +54,7 @@ def prune(dataset, model, model_handler, position_mode, with_label=False, label_
         model_handler.batch_size = 256
         train_data_generator_, _, _ = load_data(dataset, model_handler, training_augment=False, n_classes=n_classes)
         model_handler.batch_size = backup
-        apply_curl(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, save_path)
+        apply_curl(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio, save_dir+"/pruning_steps", model_handler.get_name()+postfix, save_step=save_step)
         positions = compute_positions(copied_model, ordered_groups, torder, parser, position_mode, num_blocks)
     else:
         gmodel, copied_model, parser, positions, pc = make_group_fisher(
@@ -61,6 +68,9 @@ def prune(dataset, model, model_handler, position_mode, with_label=False, label_
             num_blocks=num_blocks,
             position_mode=position_mode,
             custom_objects=model_handler.get_custom_objects(),
+            save_step=save_step,
+            save_prefix=model_handler.get_name()+postfix,
+            save_dir=save_dir+"/pruning_steps",
             logging=False)
         print(positions)
 
@@ -121,10 +131,12 @@ def prune(dataset, model, model_handler, position_mode, with_label=False, label_
         
         # Do pruning
         if with_label:
+            assert False
             prune_step(X, model, teacher_logits, y, pc)
         else:
             assert distillation
             prune_step(X, model, teacher_logits, None, pc)
+
 
     min_steps = -1
     def stopping_callback(idx, global_step):
@@ -150,20 +162,15 @@ def prune(dataset, model, model_handler, position_mode, with_label=False, label_
     print(validate(cmodel))
     profile = model_profiler.model_profiler(cmodel, 1)
     print(profile)
-    if label_only:
-        postfix = "_"+str(position_mode)+"_"+dataset+"_"+str(with_label)+"_gf_"+str(target_ratio)
-    elif curl:
-        postfix = "_"+str(position_mode)+"_"+dataset+"_"+str(with_label)+"_curl_"+str(target_ratio)
-    else:
-        postfix = "_"+str(position_mode)+"_"+dataset+"_"+str(with_label)+"_ours"+"_"+str(num_blocks)+"_"+str(target_ratio)
-    tf.keras.models.save_model(cmodel, "compressed_models/"+model_handler.get_name()+postfix+".h5")
+    tf.keras.models.save_model(cmodel, save_dir+"/"+model_handler.get_name()+postfix+".h5")
 
     if finetune:
-        train(dataset, cmodel, model_handler.get_name()+args.model_prefix+"_finetuned"+postfix, model_handler, run_eagerly=True, dir_="finetuned_models")
+        train(dataset, cmodel, model_handler.get_name()+args.model_prefix+"_finetuned"+postfix, model_handler, run_eagerly=True, save_dir=save_dir)
 
 
 def run():
     parser = argparse.ArgumentParser(description='CIFAR100 ', add_help=False)
+    parser.add_argument('--config', type=str, default=None)
     parser.add_argument('--dataset', type=str, default=None, help='model')
     parser.add_argument('--model_path', type=str, default=None, help='model')
     parser.add_argument('--model_name', type=str, default=None, help='model')
@@ -180,7 +187,24 @@ def run():
     parser.add_argument('--num_remove', type=int, default=500, help='model')
     parser.add_argument('--num_blocks', type=int, default=5, help='model')
     parser.add_argument('--target_ratio', type=float, default=0.5, help='model')
+    parser.add_argument('--save_step', type=int, default=-1, help='model')
     args = parser.parse_args()
+
+    if args.config is not None:
+        with open(args.config, 'r') as stream:
+            try:
+                config = yaml.safe_load(stream)
+            except yaml.YAMLError as exc:
+                print(exc)
+
+        for key in config:
+            if hasattr(args, key):
+                print("%s is loaded as %s." % (key, config[key]))
+                if config[key] in ["true", "false"]: # boolean handling.
+                    config[key] = config[key] == "true"
+                setattr(args, key, config[key])
+            else:
+                raise NotImplementedError("Option Error. Check your config.")
 
     if args.label_only:
         args.with_label = True
@@ -189,12 +213,15 @@ def run():
         args.with_label = True
 
     # Initialize the current folder for experiment
-
     save_dir = os.path.join(os.getcwd(), "saved_models")
     if os.path.exists(save_dir) and not args.overwrite:
         raise ValueError("`save_models` is not empty!")
     elif not os.path.exists(save_dir):
         os.mkdir(save_dir)
+
+    iter_dir = save_dir+"/pruning_steps"
+    if not os.path.exists(iter_dir):
+        os.mkdir(iter_dir)
 
     model_handler = get_model_handler(args.model_name)
 
@@ -249,7 +276,9 @@ def run():
             curl=args.curl,
             finetune=args.finetune,
             n_classes=n_classes,
-            num_blocks=args.num_blocks)
+            num_blocks=args.num_blocks,
+            save_dir=save_dir,
+            save_step=args.save_step)
 
 
 if __name__ == "__main__":
