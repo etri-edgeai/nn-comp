@@ -27,6 +27,13 @@ def find_all(model, Target):
                 ret.append(layer)
     return ret
 
+def get_num_all_channels(groups):
+    sum_ = 0
+    for gidx, group in enumerate(groups):
+        g = group[0]
+        sum_ += g.ngates
+    return sum_
+
 def compute_sparsity(groups):
     sum_ = 0
     alive = 0
@@ -164,12 +171,14 @@ class PruningCallback(keras.callbacks.Callback):
                 if compute_sparsity(groups) >= self.target_ratio:
                     break
 
-            print("SPARSITY:", compute_sparsity(groups))
             self.continue_pruning = compute_sparsity(groups) < self.target_ratio
             for layer in self.targets:
                 layer.grad_holder = []
                 if not self.continue_pruning:
                     layer.collecting = False
+
+            if not self.continue_pruning:
+                print("SPARSITY:", compute_sparsity(groups))
 
             # for fit
             if not self.continue_pruning and hasattr(self, "model") and hasattr(self.model, "stop_training"):
