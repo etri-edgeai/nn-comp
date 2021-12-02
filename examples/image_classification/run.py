@@ -26,7 +26,7 @@ from nncompress.backend.tensorflow_.transformation.pruning_parser import StopGra
 from nncompress import backend as M
 
 from curl import apply_curl
-from group_fisher import make_group_fisher, add_gates, prune_step, compute_positions
+from group_fisher import make_group_fisher, add_gates, prune_step, compute_positions, get_num_all_channels
 from loader import get_model_handler
 
 from train import load_data, train, iteration_based_train
@@ -45,6 +45,7 @@ def prune(
     min_steps=-1,
     curl=False,
     finetune=False,
+    period=25,
     n_classes=100,
     num_blocks=3,
     save_dir="",
@@ -78,6 +79,7 @@ def prune(
             model,
             model_handler,
             model_handler.get_batch_size(dataset),
+            period=period,
             target_ratio=target_ratio,
             enable_norm=True,
             num_remove=num_remove,
@@ -159,12 +161,15 @@ def prune(
             return True
         else:
             return not pc.continue_pruning
-        
+  
+    total_channels = get_num_all_channels(pc.gate_groups)
+    num_target_channels = math.ceil(total_channels * target_ratio)
+    max_iters = (num_target_channels // num_remove + int(num_target_channels % num_remove > 0)) * period
     iteration_based_train(
         dataset,
         gg,
         model_handler,
-        100,
+        max_iters,
         teacher=tt,
         with_label=with_label,
         callback_before_update=callback_before_update,
@@ -201,6 +206,7 @@ def run():
     parser.add_argument('--overwrite', action='store_true')
     parser.add_argument('--num_remove', type=int, default=500, help='model')
     parser.add_argument('--num_blocks', type=int, default=5, help='model')
+    parser.add_argument('--period', type=int, default=25, help='model')
     parser.add_argument('--min_steps', type=int, default=-1, help='model')
     parser.add_argument('--target_ratio', type=float, default=0.5, help='model')
     parser.add_argument('--save_steps', type=int, default=-1, help='model')
@@ -291,6 +297,7 @@ def run():
             target_ratio=args.target_ratio,
             curl=args.curl,
             finetune=args.finetune,
+            period=args.period,
             n_classes=n_classes,
             num_blocks=args.num_blocks,
             save_dir=save_dir,

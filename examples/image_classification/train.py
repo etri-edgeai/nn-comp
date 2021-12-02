@@ -1,6 +1,7 @@
 import math
 import os
 
+from tqdm import tqdm
 from tensorflow import keras
 import tensorflow as tf
 import tensorflow_datasets as tfds
@@ -186,7 +187,7 @@ def train_step(X, model, teacher_logits=None, y=None):
     return tape, loss
 
 
-def iteration_based_train(dataset, model, model_handler, epochs, teacher=None, with_label=True, with_distillation=True, callback_before_update=None, stopping_callback=None, augment=True, n_classes=100):
+def iteration_based_train(dataset, model, model_handler, max_iters, teacher=None, with_label=True, with_distillation=True, callback_before_update=None, stopping_callback=None, augment=True, n_classes=100):
 
     train_data_generator, valid_data_generator, test_data_generator = load_data(dataset, model_handler, training_augment=augment, n_classes=n_classes)
 
@@ -198,37 +199,41 @@ def iteration_based_train(dataset, model, model_handler, epochs, teacher=None, w
     global_step = 0
     callbacks_ = model_handler.get_callbacks(iters)
     optimizer = model_handler.get_optimizer()
-    for epoch in range(epochs):
-        done = False
-        idx = 0
-        for X, y in train_data_generator:
-            idx += 1
-            y = tf.convert_to_tensor(y, dtype=tf.float32)
-            if teacher is not None:
-                teacher_logits = teacher(X)
-                if type(teacher_logits) != list:
-                    teacher_logits = [teacher_logits]
-            else:
-                teacher_logits = None
 
-            if callback_before_update is not None:
-                callback_before_update(idx, global_step, X, model, teacher_logits, y)
-
-            if with_label:
-                if with_distillation:
-                    tape, loss = train_step(X, model, teacher_logits, y)
+    with tqdm(total=max_iters, ncols=80) as pbar:
+        while global_step < max_iters: 
+            # start with new epoch.
+            done = False
+            idx = 0
+            for X, y in train_data_generator:
+                idx += 1
+                y = tf.convert_to_tensor(y, dtype=tf.float32)
+                if teacher is not None:
+                    teacher_logits = teacher(X)
+                    if type(teacher_logits) != list:
+                        teacher_logits = [teacher_logits]
                 else:
-                    tape, loss = train_step(X, model, None, y)
-            else:
-                tape, loss = train_step(X, model, teacher_logits, None)
-            gradients = tape.gradient(loss, model.trainable_variables)
-            optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+                    teacher_logits = None
 
-            global_step += 1
-            if stopping_callback is not None and stopping_callback(idx, global_step):
-                done = True
+                if callback_before_update is not None:
+                    callback_before_update(idx, global_step, X, model, teacher_logits, y)
+
+                if with_label:
+                    if with_distillation:
+                        tape, loss = train_step(X, model, teacher_logits, y)
+                    else:
+                        tape, loss = train_step(X, model, None, y)
+                else:
+                    tape, loss = train_step(X, model, teacher_logits, None)
+                gradients = tape.gradient(loss, model.trainable_variables)
+                optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+
+                global_step += 1
+                pbar.update(1)
+                if stopping_callback is not None and stopping_callback(idx, global_step):
+                    done = True
+                    break
+            if done:
                 break
-        if done:
-            break
-        else:
-            train_data_generator.on_epoch_end()
+            else:
+                train_data_generator.on_epoch_end()
