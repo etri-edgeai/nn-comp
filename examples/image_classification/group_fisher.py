@@ -431,7 +431,7 @@ def make_group_fisher(model,
                       num_blocks=3,
                       position_mode=0,
                       fully_random=False,
-                      save_step=-1,
+                      save_steps=-1,
                       save_prefix=None,
                       save_dir=None,
                       logging=False):
@@ -485,13 +485,13 @@ def make_group_fisher(model,
             layer.collecting = False
 
     def callback_after_deletion_(num_removed):
-        if num_removed % save_step == 0:
+        if num_removed % save_steps == 0:
             assert save_dir is not None
             assert save_prefix is not None
             cmodel = parser.cut(gmodel)
             tf.keras.models.save_model(cmodel, save_dir+"/"+save_prefix+"_"+str(num_removed)+".h5")
 
-    if save_step == -1:
+    if save_steps == -1:
         cbk = None
     else:
         cbk = callback_after_deletion_

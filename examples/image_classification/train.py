@@ -1,4 +1,5 @@
 import math
+import os
 
 from tensorflow import keras
 import tensorflow as tf
@@ -185,7 +186,7 @@ def train_step(X, model, teacher_logits=None, y=None):
     return tape, loss
 
 
-def iteration_based_train(dataset, model, model_handler, epochs, teacher=None, with_label=True, callback_before_update=None, stopping_callback=None, augment=True, n_classes=100):
+def iteration_based_train(dataset, model, model_handler, epochs, teacher=None, with_label=True, with_distillation=True, callback_before_update=None, stopping_callback=None, augment=True, n_classes=100):
 
     train_data_generator, valid_data_generator, test_data_generator = load_data(dataset, model_handler, training_augment=augment, n_classes=n_classes)
 
@@ -214,7 +215,10 @@ def iteration_based_train(dataset, model, model_handler, epochs, teacher=None, w
                 callback_before_update(idx, global_step, X, model, teacher_logits, y)
 
             if with_label:
-                tape, loss = train_step(X, model, teacher_logits, y)
+                if with_distillation:
+                    tape, loss = train_step(X, model, teacher_logits, y)
+                else:
+                    tape, loss = train_step(X, model, None, y)
             else:
                 tape, loss = train_step(X, model, teacher_logits, None)
             gradients = tape.gradient(loss, model.trainable_variables)
