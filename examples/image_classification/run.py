@@ -26,12 +26,29 @@ from nncompress.backend.tensorflow_.transformation.pruning_parser import StopGra
 from nncompress import backend as M
 
 from curl import apply_curl
-from group_fisher import make_group_fisher, add_gates, prune_step
+from group_fisher import make_group_fisher, add_gates, prune_step, compute_positions
 from loader import get_model_handler
 
 from train import load_data, train, iteration_based_train
 
-def prune(dataset, model, model_handler, position_mode, with_label=False, label_only=False, distillation=True, fully_random=False, num_remove=1, target_ratio=0.5, curl=False, finetune=False, n_classes=100, num_blocks=3, save_dir="", save_step=-1):
+def prune(
+    dataset,
+    model,
+    model_handler,
+    position_mode,
+    with_label=False,
+    label_only=False,
+    distillation=True,
+    fully_random=False,
+    num_remove=1,
+    target_ratio=0.5,
+    min_steps=-1,
+    curl=False,
+    finetune=False,
+    n_classes=100,
+    num_blocks=3,
+    save_dir="",
+    save_steps=-1):
 
     if label_only:
         postfix = "_"+str(position_mode)+"_"+dataset+"_"+str(with_label)+"_gf_"+str(target_ratio)
@@ -54,7 +71,7 @@ def prune(dataset, model, model_handler, position_mode, with_label=False, label_
         model_handler.batch_size = 256
         train_data_generator_, _, _ = load_data(dataset, model_handler, training_augment=False, n_classes=n_classes)
         model_handler.batch_size = backup
-        apply_curl(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio, save_dir+"/pruning_steps", model_handler.get_name()+postfix, save_step=save_step)
+        apply_curl(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio, save_dir+"/pruning_steps", model_handler.get_name()+postfix, save_steps=save_steps)
         positions = compute_positions(copied_model, ordered_groups, torder, parser, position_mode, num_blocks)
     else:
         gmodel, copied_model, parser, positions, pc = make_group_fisher(
@@ -68,7 +85,7 @@ def prune(dataset, model, model_handler, position_mode, with_label=False, label_
             num_blocks=num_blocks,
             position_mode=position_mode,
             custom_objects=model_handler.get_custom_objects(),
-            save_step=save_step,
+            save_steps=save_steps,
             save_prefix=model_handler.get_name()+postfix,
             save_dir=save_dir+"/pruning_steps",
             logging=False)
@@ -111,6 +128,7 @@ def prune(dataset, model, model_handler, position_mode, with_label=False, label_
                 g_outputs.append(gmodel.get_layer(p).output)
        
         tt = tf.keras.Model(t_model.input, [t_model.output]+t_outputs)
+        tt.trainable = False
         gg = tf.keras.Model(gmodel.input, [gmodel.output]+g_outputs)
     else:
         tt = None
@@ -131,14 +149,11 @@ def prune(dataset, model, model_handler, position_mode, with_label=False, label_
         
         # Do pruning
         if with_label:
-            assert False
             prune_step(X, model, teacher_logits, y, pc)
         else:
             assert distillation
             prune_step(X, model, teacher_logits, None, pc)
 
-
-    min_steps = -1
     def stopping_callback(idx, global_step):
         if min_steps != -1 and global_step >= min_steps:
             return True
@@ -186,8 +201,9 @@ def run():
     parser.add_argument('--overwrite', action='store_true')
     parser.add_argument('--num_remove', type=int, default=500, help='model')
     parser.add_argument('--num_blocks', type=int, default=5, help='model')
+    parser.add_argument('--min_steps', type=int, default=-1, help='model')
     parser.add_argument('--target_ratio', type=float, default=0.5, help='model')
-    parser.add_argument('--save_step', type=int, default=-1, help='model')
+    parser.add_argument('--save_steps', type=int, default=-1, help='model')
     args = parser.parse_args()
 
     if args.config is not None:
@@ -219,10 +235,6 @@ def run():
     elif not os.path.exists(save_dir):
         os.mkdir(save_dir)
 
-    iter_dir = save_dir+"/pruning_steps"
-    if not os.path.exists(iter_dir):
-        os.mkdir(iter_dir)
-
     model_handler = get_model_handler(args.model_name)
 
     if args.dataset == "cifar100":
@@ -251,6 +263,10 @@ def run():
         train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir)
     elif args.mode == "prune":
 
+        iter_dir = save_dir+"/pruning_steps"
+        if not os.path.exists(iter_dir):
+            os.mkdir(iter_dir)
+
         if args.model_path is None:
             from pathset import paths
             model_path = paths[args.dataset][args.model_name]
@@ -278,7 +294,8 @@ def run():
             n_classes=n_classes,
             num_blocks=args.num_blocks,
             save_dir=save_dir,
-            save_step=args.save_step)
+            min_steps=args.min_steps,
+            save_steps=args.save_steps)
 
 
 if __name__ == "__main__":

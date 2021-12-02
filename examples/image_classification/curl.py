@@ -26,7 +26,7 @@ def find_min(score, gates_info, n_channels_group, n_removed_group, ngates):
 
     return idx
 
-def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, target_ratio, save_dir, save_prefix, save_step):
+def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, target_ratio, save_dir, save_prefix, save_steps):
 
     print("collecting...")
     data = []
@@ -87,7 +87,7 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
     ]
 
     while float(n_removed) / n_channels < target_ratio:
-        if n_removed % save_step == 0:
+        if n_removed % save_steps == 0:
             for key in gates_weights:
                 layer = gated_model.get_layer(key)
                 layer.gates.assign(gates_weights[key])
