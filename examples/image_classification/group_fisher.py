@@ -3,6 +3,7 @@ import types
 import json
 from collections import OrderedDict
 import math
+import copy
 
 import tensorflow as tf
 from tensorflow import keras
@@ -52,153 +53,24 @@ def find_min(cscore, gates, min_val, min_idx, gidx, ncol):
     assert min_idx[0] != -1
     return min_val, min_idx
 
-class PruningCallback(keras.callbacks.Callback):
-
-    def __init__(self,
-                 norm,
-                 targets,
-                 gate_groups=None,
-                 target_ratio=0.5,
-                 period=10,
-                 l2g = None,
-                 num_remove=1,
-                 fully_random=False,
-                 callback_after_deletion=None,
-                 logging=False):
-        super(PruningCallback, self).__init__()
-        self.norm = norm
-        self.targets = targets
-        self.period = period
-        self.target_ratio = target_ratio
-        self.continue_pruning = True
-        self.gate_groups = gate_groups
-        self._iter = 0
-        self._num_removed = 0
-        self.l2g = l2g
-        self.num_remove = num_remove
-        self.fully_random = fully_random
-        self.callback_after_deletion = callback_after_deletion
-        self.logging = logging
-        if self.logging:
-            self.logs = []
-        else:
-            self.logs = None
-
-    def on_train_batch_end(self, batch, logs=None):
-        self._iter += 1
-        if self._iter % self.period == 0 and self.continue_pruning:
-
-            if self.gate_groups is not None:
-                groups = self.gate_groups
-            else:
-                groups = [
-                    [gate] for gate in self.targets
-                ]
-
-            cscore_ = {}
-            #groups.reverse()
-            for gidx, group in enumerate(groups):
-
-                # compute grad based si
-                num_batches = len(group[0].grad_holder)
-                sum_ = 0
-                cscore = None
-                for bidx in range(num_batches):
-                    grad = 0
-                    for lidx, layer in enumerate(group):
-                        gates_ = layer.gates.numpy()
-                        if np.sum(gates_) < 2.0: # min channels.
-                            break
-
-                        grad += layer.grad_holder[bidx]
-
-                    if type(grad) == int and grad == 0:
-                        continue
-
-                    grad = pow(grad, 2)
-                    sum_ += tf.reduce_sum(grad, axis=0)
-                    cscore = 0.0
-
-                # compute normalization
-                norm_ = 0
-                for lidx, layer in enumerate(group):
-
-                    gates_ = layer.gates.numpy()
-                    if np.sum(gates_) < 2.0: # min channels.
-                        break
-
-                    norm_ += self.norm[layer.name]
-
-                if cscore is not None: # To handle cscore is undefined.
-                    #cscore = sum_
-                    cscore = sum_ / norm_
-                cscore_[gidx] = cscore
-
-                if self.logs is not None and len(self.logs) == 0:
-                    self.logs.append((group, cscore))
-                    print([g.name for g in group])
-                    for ii in range(cscore.shape[0]):
-                        print(ii, float(cscore[ii]))
-                    import sys
-                    sys.exit(0)
-
-            for _ in range(self.num_remove):
-                min_val = -1
-                min_idx = (-1, -1)
-                for gidx, group in enumerate(groups):
-
-                    cscore = cscore_[gidx]
-                    gates_ = group[0].gates.numpy()
-                    if np.sum(gates_) < 2.0:
-                        continue
-                    if cscore is not None:
-                        if self.fully_random:
-                            cscore = np.random.rand(*tuple(cscore.shape))
-                        else:
-                            min_val, min_idx = find_min(cscore, gates_, min_val, min_idx, gidx, cscore.shape[0])
-
-                min_group = groups[min_idx[0]]
-                for min_layer in min_group:
-                    gates_ = min_layer.gates.numpy()
-                    gates_[min_idx[1]] = 0.0
-                    min_layer.gates.assign(gates_)
-
-                self._num_removed += 1
-
-                if self.callback_after_deletion is not None:
-                   self.callback_after_deletion(self._num_removed)
-
-                if compute_sparsity(groups) >= self.target_ratio:
-                    break
-
-            self.continue_pruning = compute_sparsity(groups) < self.target_ratio
-            for layer in self.targets:
-                layer.grad_holder = []
-                if not self.continue_pruning:
-                    layer.collecting = False
-
-            if not self.continue_pruning:
-                print("SPARSITY:", compute_sparsity(groups))
-
-            # for fit
-            if not self.continue_pruning and hasattr(self, "model") and hasattr(self.model, "stop_training"):
-                self.model.stop_training = True
-            return True
-        else:
-            return False
-
-def compute_act(layer, batch_size, is_input_gate=False):
+def compute_act(layer, batch_size, is_input_gate=False, out_gate=None):
 
     if is_input_gate:
         if layer.__class__.__name__ == "Conv2D":
             w = layer.get_weights()[0].shape
-            return batch_size * np.prod(list(w[0:2])+[w[2]])
+            if out_gate is None:
+                return batch_size * np.prod(list(w[0:2])+[w[3]])
+            else:
+                return batch_size * np.prod(list(w[0:2])+[np.sum(out_gate)])
         elif layer.__class__.__name__ == "SeparableConv2D":
             w1 = layer.get_weights()[0].shape
             w2 = layer.get_weights()[1].shape
             print(w1, w2)
             xxxxxxxxxxxx # later check.
-            return batch_size * np.prod(list(w2[0:2])+[w2[2]])
+            return batch_size * np.prod(list(w2[0:2])+[w2[3]])
+        elif layer.__class__.__name__ == "Dense":
+            w = layer.get_weights()[0].shape
+            return batch_size * w[1]
         else:
             return 0.0
     else: 
@@ -249,7 +121,7 @@ def add_gates(model, custom_objects=None, avoid=None):
         ordered_groups.append((g, torder[g_[0]]))
         ###
         #ordered_groups.append((g, torder[g_[0]]))
-    ordered_groups = sorted(ordered_groups, key=lambda x: x[1])[:-1] # remove last
+    ordered_groups = sorted(ordered_groups, key=lambda x: x[1])
 
     return gmodel, model, l2g, ordered_groups, torder, parser, gate_mapping
 
@@ -294,7 +166,10 @@ def compute_positions(model, ordered_groups, torder, parser, position_mode, num_
     elif position_mode == 1: # joints
         positions = []
         for b in blocks:
-            act = parser.get_first_activation(b[-1][1])
+            if b[-1][1] is None:
+                act = parser.get_first_activation(b[-1][0][0]) # last layer.
+            else:
+                act = parser.get_first_activation(b[-1][1])
             if act not in positions:
                 positions.append(act)
 
@@ -428,6 +303,295 @@ def compute_positions(model, ordered_groups, torder, parser, position_mode, num_
 
     return positions
 
+
+def compute_norm(parser, gate_mapping, gmodel, batch_size, targets, groups, inv_groups, l2g):
+
+    norm = {
+        t.name: 0.0
+        for t in targets
+    }
+    parents = {}
+    g2l = {}
+
+    """
+    def _compute_norm(n, level, parser):
+        if (n, level) in gate_mapping:
+            out_gate = gmodel.get_layer(gate_mapping[(n, level)][0]["config"]["name"]).gates.numpy()
+            child_gate = gate_mapping[(n, level)][0]["config"]["name"]
+            if gmodel.get_layer(n).__class__.__name__ in ["Conv2D", "Dense"]:
+               g2l[child_gate] = n
+        else:
+            child_gate = None
+            out_gate = None
+
+        # Handling input gates
+        for e in parser._graph.in_edges(n, data=True):
+            src, dst, level_change, inbound_idx = e[0], e[1], e[2]["level_change"], e[2]["inbound_idx"]
+
+            if level_change[1] != level:
+                continue
+            elif (src, level_change[0]) in gate_mapping:
+                parent_gate = gate_mapping[(src, level_change[0])][0]["config"]["name"]
+                if child_gate is not None:
+                    if child_gate not in parents:
+                        parents[child_gate] = []
+
+                    if parent_gate != child_gate:
+                        if parent_gate not in parents[child_gate] and gmodel.get_layer(n).__class__.__name__ in ["Conv2D", "Dense"]:
+                            parents[child_gate].append(parent_gate)
+
+                norm[gate_mapping[(src, level_change[0])][0]["config"]["name"]] +=\
+                        compute_act(gmodel.get_layer(n), batch_size, is_input_gate=True, out_gate=out_gate)
+        if (n, level) in gate_mapping: # Handling layers without gates
+            norm[gate_mapping[(n, level)][0]["config"]["name"]] += compute_act(gmodel.get_layer(n), batch_size)
+    """
+
+    contributors = {}
+
+    for l in l2g:
+        g2l[l2g[l]] = l
+
+    affecting = parser.get_affecting_layers()
+    for child, parents_ in affecting.items():
+        if gmodel.get_layer(child[0]).__class__.__name__ not in ["Conv2D", "Dense"]:
+            continue
+        if child[0] not in l2g: # the last layer
+            continue
+
+        child_gate = l2g[child[0]]
+        if child_gate not in parents:
+            parents[child_gate] = []
+        for p in parents_:
+            if gmodel.get_layer(p[0]).__class__.__name__ not in ["Conv2D", "Dense"]:
+                continue
+            parent_gate = l2g[p[0]]
+            parents[child_gate].append(parent_gate)
+
+    for key in norm:
+        norm[key] = compute_act(gmodel.get_layer(g2l[key]), batch_size)
+        if inv_groups[key] not in contributors:
+            contributors[inv_groups[key]] = set()
+        contributors[inv_groups[key]].add(g2l[key])
+
+    for child, _ in affecting.items():
+        if gmodel.get_layer(child[0]).__class__.__name__ == "DepthwiseConv2D":
+            gate = gate_mapping[(child[0], 0)][0]["config"]["name"]
+            norm[gate] += compute_act(gmodel.get_layer(child[0]), batch_size)
+            contributors[inv_groups[gate]].add(child[0])
+
+    gnorm = [0 for _ in range(len(groups))]
+    visit = set()
+    for c, p in parents.items():
+        if len(p) == 0: # first gate
+            continue
+
+        for p_ in p:
+            gidx = inv_groups[p_]
+            cgidx = inv_groups[c]
+            if (gidx, cgidx) in visit:
+                continue
+            visit.add((gidx, cgidx))
+
+            if gidx == cgidx:
+                continue
+
+            for l in groups[cgidx]:
+                out_gate = gmodel.get_layer(l.name).gates.numpy()
+                gnorm[gidx] += compute_act(gmodel.get_layer(g2l[l.name]), batch_size, is_input_gate=True, out_gate=out_gate)
+
+    final_norm = [0 for _ in range(len(groups))]
+    for gidx in range(len(groups)):
+        for l in groups[gidx]:
+            final_norm[gidx] += norm[l.name]
+        final_norm[gidx] += gnorm[gidx]
+
+    for gidx in range(len(final_norm)):
+        final_norm[gidx] = float(max(final_norm[gidx], 1.0)) / 1e6
+
+    return final_norm, parents, g2l, contributors
+
+
+class PruningCallback(keras.callbacks.Callback):
+
+    def __init__(self,
+                 norm,
+                 targets,
+                 gate_groups=None,
+                 inv_groups = None,
+                 target_ratio=0.5,
+                 period=10,
+                 l2g = None,
+                 num_remove=1,
+                 fully_random=False,
+                 callback_after_deletion=None,
+                 compute_norm_func=None,
+                 batch_size=32,
+                 gmodel=None,
+                 logging=False):
+        super(PruningCallback, self).__init__()
+        self.norm = norm
+        self.targets = targets
+        self.period = period
+        self.target_ratio = target_ratio
+        self.continue_pruning = True
+        self.gate_groups = gate_groups
+        self.inv_groups = inv_groups
+
+        self._iter = 0
+        self._num_removed = 0
+        self.l2g = l2g
+        self.num_remove = num_remove
+        self.fully_random = fully_random
+        self.callback_after_deletion = callback_after_deletion
+        self.compute_norm_func = compute_norm_func
+        self.gmodel = gmodel
+        self.batch_size = batch_size
+        self.logging = logging
+        if self.logging:
+            self.logs = []
+        else:
+            self.logs = None
+
+    def on_train_batch_end(self, batch, logs=None):
+        self._iter += 1
+        if self._iter % self.period == 0 and self.continue_pruning:
+
+            if self.compute_norm_func is not None:
+                self.norm, parents, g2l, contributors = self.compute_norm_func()
+
+            if self.gate_groups is not None:
+                groups = self.gate_groups
+            else:
+                groups = [
+                    [gate] for gate in self.targets
+                ]
+
+            cscore_ = {}
+            #groups.reverse()
+            for gidx, group in enumerate(groups):
+
+                # compute grad based si
+                num_batches = len(group[0].grad_holder)
+                sum_ = 0
+                cscore = None
+                for bidx in range(num_batches):
+                    grad = 0
+                    for lidx, layer in enumerate(group):
+                        gates_ = layer.gates.numpy()
+                        if np.sum(gates_) < 2.0: # min channels.
+                            break
+
+                        grad += layer.grad_holder[bidx]
+
+                    if type(grad) == int and grad == 0:
+                        continue
+
+                    grad = pow(grad, 2)
+                    sum_ += tf.reduce_sum(grad, axis=0)
+                    cscore = 0.0
+
+                # compute normalization
+                """
+                norm_ = 0
+                for lidx, layer in enumerate(group):
+
+                    gates_ = layer.gates.numpy()
+                    if np.sum(gates_) < 2.0: # min channels.
+                        break
+
+                    norm_ += self.norm[layer.name]
+                """
+
+                if cscore is not None: # To handle cscore is undefined.
+                    #cscore = sum_
+                    cscore = sum_ / self.norm[gidx]
+                cscore_[gidx] = cscore
+
+                if self.logs is not None and len(self.logs) == 0:
+                    self.logs.append((group, cscore))
+                    print([g.name for g in group])
+                    for ii in range(cscore.shape[0]):
+                        print(ii, float(cscore[ii]))
+                    import sys
+                    sys.exit(0)
+
+            for _ in range(self.num_remove):
+                min_val = -1
+                min_idx = (-1, -1)
+                for gidx, group in enumerate(groups):
+
+                    cscore = cscore_[gidx]
+                    gates_ = group[0].gates.numpy()
+                    if np.sum(gates_) < 2.0:
+                        continue
+                    if cscore is not None:
+                        if self.fully_random:
+                            cscore = np.random.rand(*tuple(cscore.shape))
+                        else:
+                            min_val, min_idx = find_min(cscore, gates_, min_val, min_idx, gidx, cscore.shape[0])
+
+                min_group = groups[min_idx[0]]
+                for min_layer in min_group:
+                    gates_ = min_layer.gates.numpy()
+                    gates_[min_idx[1]] = 0.0
+                    min_layer.gates.assign(gates_)
+
+                # score update
+                cscore_[min_idx[0]] *= self.norm[min_idx[0]]
+                visit = set()
+                base_norm_sum = 0
+                delta1 = 0
+                delta2 = 0
+                #for min_layer in min_group:
+                #    w = self.gmodel.get_layer(g2l[min_layer.name]).get_weights()[0].shape
+                #    delta += float(max(self.batch_size * np.prod(list(w[0:2])), 1.0)) / 1e6
+                for cbt in contributors[min_idx[0]]:
+                    if self.gmodel.get_layer(cbt).__class__.__name__ not in ["Conv2D", "DepthwiseConv2D"]:
+                        continue
+                    w = self.gmodel.get_layer(cbt).get_weights()[0].shape
+                    if self.gmodel.get_layer(cbt).__class__.__name__ == "Conv2D":
+                        delta1 += float(max(self.batch_size * np.prod(list(w[0:2])), 1.0)) / 1e6
+                    else:
+                        delta2 += float(max(self.batch_size * np.prod(list(w[0:2])), 1.0)) / 1e6
+                self.norm[min_idx[0]] -= (delta1+delta2)
+                cscore_[min_idx[0]] /= self.norm[min_idx[0]]
+
+                for min_layer in min_group:
+                    for p in parents[min_layer.name]:
+                        if cscore_[self.inv_groups[p]] is None:
+                            continue
+
+                        if (min_idx[0], self.inv_groups[p]) in visit or min_idx[0] == self.inv_groups[p]:
+                            continue
+                        visit.add((min_idx[0], self.inv_groups[p]))
+                        cscore_[self.inv_groups[p]] *= self.norm[self.inv_groups[p]]
+                        self.norm[self.inv_groups[p]] -= delta1
+                        cscore_[self.inv_groups[p]] /= self.norm[self.inv_groups[p]]
+
+                self._num_removed += 1
+
+                if self.callback_after_deletion is not None:
+                   self.callback_after_deletion(self._num_removed)
+
+                if compute_sparsity(groups) >= self.target_ratio:
+                    break
+
+            self.continue_pruning = compute_sparsity(groups) < self.target_ratio
+            for layer in self.targets:
+                layer.grad_holder = []
+                if not self.continue_pruning:
+                    layer.collecting = False
+
+            if not self.continue_pruning:
+                print("SPARSITY:", compute_sparsity(groups))
+
+            # for fit
+            if not self.continue_pruning and hasattr(self, "model") and hasattr(self.model, "stop_training"):
+                self.model.stop_training = True
+            return True
+        else:
+            return False
+
 def make_group_fisher(model,
                       model_handler,
                       batch_size,
@@ -437,8 +601,6 @@ def make_group_fisher(model,
                       target_ratio=0.5,
                       enable_norm=True,
                       num_remove=1,
-                      num_blocks=3,
-                      position_mode=0,
                       fully_random=False,
                       save_steps=-1,
                       save_prefix=None,
@@ -455,37 +617,19 @@ def make_group_fisher(model,
             gate_group.append(gmodel.get_layer(l2g[l]))
         groups.append(gate_group)
 
+    inv_groups = {}
+    for idx, g in enumerate(groups):
+        for l in g:
+            inv_groups[l.name] = idx 
+
     # Compute normalization score
     if enable_norm:
-        norm = {
-            t.name: 0.0
-            for t in targets
-        }
-        def compute_norm(n, level, parser):
-            # Handling input gates
-            for e in parser._graph.in_edges(n, data=True):
-                src, dst, level_change, inbound_idx = e[0], e[1], e[2]["level_change"], e[2]["inbound_idx"]
-                if level_change[1] != level:
-                    continue
-                elif (src, level_change[0]) in gate_mapping:
-                    if not gate_mapping[(src, level_change[0])][0]["class_name"] == "Concatenate":
-                        norm[gate_mapping[(src, level_change[0])][0]["config"]["name"]] +=\
-                            compute_act(gmodel.get_layer(n), batch_size, is_input_gate=True)
-            if (n, level) in gate_mapping: # Handling layers without gates
-                if not gate_mapping[(n, level)][0]["class_name"] == "Concatenate":
-                    norm[gate_mapping[(n, level)][0]["config"]["name"]] += compute_act(gmodel.get_layer(n), batch_size)
-        parser.traverse(node_callbacks=[lambda n, level: compute_norm(n, level, parser)])
-
-        for key, val in norm.items():
-            norm[key] = float(max(val, 1.0)) / 1e6
+        norm, parents, g2l, contributors = compute_norm(parser, gate_mapping, gmodel, batch_size, targets, groups, inv_groups, l2g)
     else:
         norm = {
             t.name: 1.0
             for t in targets
         }
-
-    #joints = parser.get_joints()
-    positions = compute_positions(model, ordered_groups, torder, parser, position_mode, num_blocks)
 
     # ready for collecting
     for layer in gmodel.layers:
@@ -505,16 +649,21 @@ def make_group_fisher(model,
     else:
         cbk = callback_after_deletion_
 
-    return gmodel, model, parser, positions, PruningCallback(
+    norm_func = lambda : compute_norm(parser, gate_mapping, gmodel, batch_size, targets, groups, inv_groups, l2g)
+    return gmodel, model, parser, ordered_groups, torder, PruningCallback(
         norm,
         targets,
         gate_groups=groups,
+        inv_groups=inv_groups,
         period=period,
         target_ratio=target_ratio,
         l2g=l2g,
         num_remove=num_remove,
+        compute_norm_func=norm_func,
         fully_random=fully_random,
         callback_after_deletion=cbk,
+        batch_size=batch_size,
+        gmodel=gmodel,
         logging=logging)
 
 

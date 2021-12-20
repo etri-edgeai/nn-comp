@@ -31,6 +31,7 @@ from loader import get_model_handler
 
 from train import load_data, train, iteration_based_train
 
+
 def prune(
     dataset,
     model,
@@ -51,12 +52,17 @@ def prune(
     save_dir="",
     save_steps=-1):
 
-    if label_only:
-        postfix = "_"+str(position_mode)+"_"+dataset+"_"+str(with_label)+"_gf_"+str(target_ratio)
-    elif curl:
-        postfix = "_"+str(position_mode)+"_"+dataset+"_"+str(with_label)+"_curl_"+str(target_ratio)
+    if type(position_mode) != int:
+        pos_str = "custom"
     else:
-        postfix = "_"+str(position_mode)+"_"+dataset+"_"+str(with_label)+"_ours"+"_"+str(num_blocks)+"_"+str(target_ratio)
+        pos_str = str(position_mode)
+
+    if label_only:
+        postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_gf_"+str(target_ratio)
+    elif curl:
+        postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_curl_"+str(target_ratio)
+    else:
+        postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_ours"+"_"+str(num_blocks)+"_"+str(target_ratio)
 
     _, _, test_data_gen = load_data(dataset, model_handler, batch_size=model_handler.batch_size, n_classes=n_classes)
     def validate(model_):
@@ -73,9 +79,8 @@ def prune(
         train_data_generator_, _, _ = load_data(dataset, model_handler, training_augment=False, n_classes=n_classes)
         model_handler.batch_size = backup
         apply_curl(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio, save_dir+"/pruning_steps", model_handler.get_name()+postfix, save_steps=save_steps)
-        positions = compute_positions(copied_model, ordered_groups, torder, parser, position_mode, num_blocks)
     else:
-        gmodel, copied_model, parser, positions, pc = make_group_fisher(
+        gmodel, copied_model, parser, ordered_groups, torder, pc = make_group_fisher(
             model,
             model_handler,
             model_handler.get_batch_size(dataset),
@@ -84,14 +89,43 @@ def prune(
             enable_norm=True,
             num_remove=num_remove,
             fully_random=fully_random,
-            num_blocks=num_blocks,
-            position_mode=position_mode,
             custom_objects=model_handler.get_custom_objects(),
             save_steps=save_steps,
             save_prefix=model_handler.get_name()+postfix,
             save_dir=save_dir+"/pruning_steps",
             logging=False)
-        print(positions)
+
+    def callback_before_update(idx, global_step, X, model_, teacher_logits, y):
+        if curl:
+            return
+
+        if distillation:
+            assert teacher_logits is not None
+        else:   
+            assert teacher_logits is None
+
+        if label_only:
+            assert with_label
+            teacher_logits = None
+        
+        # Do pruning
+        if with_label:
+            prune_step(X, model_, teacher_logits, y, pc)
+        else:
+            assert distillation
+            prune_step(X, model_, teacher_logits, None, pc)
+
+    def stopping_callback(idx, global_step):
+        if min_steps != -1 and global_step >= min_steps:
+            return True
+        else:
+            return not pc.continue_pruning
+
+    if type(position_mode) == int:
+        positions = compute_positions(
+            copied_model, ordered_groups, torder, parser, position_mode, num_blocks)
+    else:
+        positions = position_mode
 
     profile = model_profiler.model_profiler(copied_model, 1)
     print(profile)
@@ -135,32 +169,6 @@ def prune(
     else:
         tt = None
         gg = gmodel
-
-    def callback_before_update(idx, global_step, X, model, teacher_logits, y):
-        if curl:
-            return
-
-        if distillation:
-            assert teacher_logits is not None
-        else:   
-            assert teacher_logits is None
-
-        if label_only:
-            assert with_label
-            teacher_logits = None
-        
-        # Do pruning
-        if with_label:
-            prune_step(X, model, teacher_logits, y, pc)
-        else:
-            assert distillation
-            prune_step(X, model, teacher_logits, None, pc)
-
-    def stopping_callback(idx, global_step):
-        if min_steps != -1 and global_step >= min_steps:
-            return True
-        else:
-            return not pc.continue_pruning
   
     total_channels = get_num_all_channels(pc.gate_groups)
     num_target_channels = math.ceil(total_channels * target_ratio)
@@ -172,6 +180,7 @@ def prune(
         max_iters,
         teacher=tt,
         with_label=with_label,
+        with_distillation=distillation and not label_only,
         callback_before_update=callback_before_update,
         stopping_callback=stopping_callback,
         augment=True,
@@ -186,6 +195,7 @@ def prune(
 
     if finetune:
         train(dataset, cmodel, model_handler.get_name()+args.model_prefix+"_finetuned"+postfix, model_handler, run_eagerly=True, save_dir=save_dir)
+    return cmodel
 
 
 def run():
@@ -262,10 +272,23 @@ def run():
             model = tf.keras.models.load_model(args.model_path, custom_objects=model_handler.get_custom_objects())
         else:
             model = tf.keras.models.load_model(args.model_path)
+
+        model_handler.compile(model)
         _, _, test_data_gen = load_data(dataset, model_handler, n_classes=n_classes)
         print(model.evaluate(test_data_gen, verbose=1)[1])
     elif args.mode == "train": # train
         model = model_handler.get_model(dataset, n_classes=n_classes)
+        train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir)
+
+    elif args.mode == "finetune": # train
+        save_dir = save_dir+"/finetuned_models"
+        if not os.path.exists(save_dir):
+            os.mkdir(save_dir)
+
+        if hasattr(model_handler, "get_custom_objects"):
+            model = tf.keras.models.load_model(args.model_path, custom_objects=model_handler.get_custom_objects())
+        else:
+            model = tf.keras.models.load_model(args.model_path)
         train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir)
     elif args.mode == "prune":
 
