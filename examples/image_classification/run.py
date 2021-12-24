@@ -42,6 +42,8 @@ def prune(
     distillation=True,
     fully_random=False,
     num_remove=1,
+    enable_distortion_detect=False,
+    print_by_pruning=False,
     target_ratio=0.5,
     min_steps=-1,
     curl=False,
@@ -88,6 +90,7 @@ def prune(
             target_ratio=target_ratio,
             enable_norm=True,
             num_remove=num_remove,
+            enable_distortion_detect=enable_distortion_detect,
             fully_random=fully_random,
             custom_objects=model_handler.get_custom_objects(),
             save_steps=save_steps,
@@ -95,7 +98,7 @@ def prune(
             save_dir=save_dir+"/pruning_steps",
             logging=False)
 
-    def callback_before_update(idx, global_step, X, model_, teacher_logits, y):
+    def callback_before_update(idx, global_step, X, model_, teacher_logits, y, pbar):
         if curl:
             return
 
@@ -110,14 +113,17 @@ def prune(
         
         # Do pruning
         if with_label:
-            prune_step(X, model_, teacher_logits, y, pc)
+            return prune_step(X, model_, teacher_logits, y, pc, print_by_pruning, pbar)
         else:
             assert distillation
-            prune_step(X, model_, teacher_logits, None, pc)
+            return prune_step(X, model_, teacher_logits, None, pc, print_by_pruning, pbar)
 
     def stopping_callback(idx, global_step):
-        if min_steps != -1 and global_step >= min_steps:
-            return True
+        if min_steps != -1:
+            if global_step >= min_steps and not pc.continue_pruning:
+                return True
+            else:
+                return False
         else:
             return not pc.continue_pruning
 
@@ -143,6 +149,8 @@ def prune(
         with keras.utils.custom_object_scope(custom_object_scope):
             t_model = M.add_prefix(copied_model, "t_")
 
+        pc.build_subnets(positions, custom_objects=model_handler.get_custom_objects())
+
         t_outputs = []
         for p in positions:
             if type(p) == list:
@@ -162,6 +170,18 @@ def prune(
                 g_outputs.append(sub_p)
             else:
                 g_outputs.append(gmodel.get_layer(p).output)
+
+        subnet_outputs = []
+        for subnet, inputs, outputs in pc.subnets:
+            ins = []
+            for in_ in inputs:
+                ins.append(gmodel.get_layer(in_).output)
+            
+            outs = []
+            for out_ in outputs:
+                outs.append(gmodel.get_layer(out_).output)
+            subnet_outputs.append((ins, outs))
+        g_outputs.append(subnet_outputs)
        
         tt = tf.keras.Model(t_model.input, [t_model.output]+t_outputs)
         tt.trainable = False
@@ -172,7 +192,16 @@ def prune(
   
     total_channels = get_num_all_channels(pc.gate_groups)
     num_target_channels = math.ceil(total_channels * target_ratio)
-    max_iters = (num_target_channels // num_remove + int(num_target_channels % num_remove > 0)) * period
+    if print_by_pruning:
+        max_iters = num_target_channels
+    else:
+        if enable_distortion_detect:
+            max_iters = num_target_channels * period
+        else:
+            max_iters = (num_target_channels // num_remove + int(num_target_channels % num_remove > 0)) * period
+
+    if min_steps > max_iters:
+        max_iters = min_steps
     iteration_based_train(
         dataset,
         gg,
@@ -215,6 +244,8 @@ def run():
     parser.add_argument('--finetune', action='store_true')
     parser.add_argument('--overwrite', action='store_true')
     parser.add_argument('--num_remove', type=int, default=500, help='model')
+    parser.add_argument('--enable_distortion_detect', action='store_true')
+    parser.add_argument('--print_by_pruning', action='store_true')
     parser.add_argument('--num_blocks', type=int, default=5, help='model')
     parser.add_argument('--period', type=int, default=25, help='model')
     parser.add_argument('--min_steps', type=int, default=-1, help='model')
@@ -317,6 +348,8 @@ def run():
             distillation=args.distillation,
             fully_random=args.fully_random,
             num_remove=args.num_remove,
+            enable_distortion_detect=args.enable_distortion_detect,
+            print_by_pruning=args.print_by_pruning,
             target_ratio=args.target_ratio,
             curl=args.curl,
             finetune=args.finetune,

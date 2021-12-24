@@ -147,7 +147,7 @@ def train(dataset, model, model_name, model_handler, run_eagerly=False, callback
                                         steps_per_epoch=iters)
 
 
-def train_step(X, model, teacher_logits=None, y=None):
+def train_step(X, model, teacher_logits=None, y=None, ret_last_tensor=False):
 
     if teacher_logits is not None:
         len_outputs = len(teacher_logits)
@@ -184,7 +184,10 @@ def train_step(X, model, teacher_logits=None, y=None):
             assert y is not None
             loss = tf.math.reduce_mean(tf.keras.losses.categorical_crossentropy(logits[0], y))
 
-    return tape, loss
+    if ret_last_tensor:
+        return tape, loss, logits[-1]
+    else:
+        return tape, loss
 
 
 def iteration_based_train(dataset, model, model_handler, max_iters, teacher=None, with_label=True, with_distillation=True, callback_before_update=None, stopping_callback=None, augment=True, n_classes=100):
@@ -200,7 +203,7 @@ def iteration_based_train(dataset, model, model_handler, max_iters, teacher=None
     callbacks_ = model_handler.get_callbacks(iters)
     optimizer = model_handler.get_optimizer()
 
-    with tqdm(total=max_iters, ncols=80) as pbar:
+    with tqdm(total=max_iters, ncols=160) as pbar:
         while global_step < max_iters: 
             # start with new epoch.
             done = False
@@ -216,7 +219,7 @@ def iteration_based_train(dataset, model, model_handler, max_iters, teacher=None
                     teacher_logits = None
 
                 if callback_before_update is not None:
-                    callback_before_update(idx, global_step, X, model, teacher_logits, y)
+                    ret = callback_before_update(idx, global_step, X, model, teacher_logits, y, pbar)
 
                 if with_label:
                     if with_distillation:
@@ -229,7 +232,11 @@ def iteration_based_train(dataset, model, model_handler, max_iters, teacher=None
                 optimizer.apply_gradients(zip(gradients, model.trainable_variables))
 
                 global_step += 1
-                pbar.update(1)
+                if ret is not None:
+                    if ret != 0:
+                        pbar.update(ret)
+                else:
+                    pbar.update(1)
                 if stopping_callback is not None and stopping_callback(idx, global_step):
                     done = True
                     break
