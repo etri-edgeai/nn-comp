@@ -12,7 +12,7 @@ from numba import njit
 from numpy import dot
 from numpy.linalg import norm as npnorm
 
-from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
+from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser, NNParser
 from nncompress.backend.tensorflow_ import SimplePruningGate, DifferentiableGate
 from nncompress.backend.tensorflow_.transformation import parse, inject, cut, unfold
 
@@ -53,9 +53,9 @@ def find_min(cscore, gates, min_val, min_idx, gidx, ncol):
     assert min_idx[0] != -1
     return min_val, min_idx
 
-def compute_act(layer, batch_size, is_input_gate=False, out_gate=None):
+def compute_act(layer, batch_size, pruning_input_gate=False, out_gate=None):
 
-    if is_input_gate:
+    if pruning_input_gate:
         if layer.__class__.__name__ == "Conv2D":
             w = layer.get_weights()[0].shape
             if out_gate is None:
@@ -75,7 +75,7 @@ def compute_act(layer, batch_size, is_input_gate=False, out_gate=None):
             return 0.0
     else: 
         if layer.__class__.__name__ == "Conv2D" or\
-            (layer.__class__.__name__ == "DepthwiseConv2D" and not is_input_gate):
+            (layer.__class__.__name__ == "DepthwiseConv2D" and not pruning_input_gate):
             # DepthwiseConv2D only contributes for the gate associated with its outputs.
             assert layer.groups == 1
             return batch_size * np.prod(layer.get_weights()[0].shape[0:3])
@@ -313,43 +313,11 @@ def compute_norm(parser, gate_mapping, gmodel, batch_size, targets, groups, inv_
     parents = {}
     g2l = {}
 
-    """
-    def _compute_norm(n, level, parser):
-        if (n, level) in gate_mapping:
-            out_gate = gmodel.get_layer(gate_mapping[(n, level)][0]["config"]["name"]).gates.numpy()
-            child_gate = gate_mapping[(n, level)][0]["config"]["name"]
-            if gmodel.get_layer(n).__class__.__name__ in ["Conv2D", "Dense"]:
-               g2l[child_gate] = n
-        else:
-            child_gate = None
-            out_gate = None
-
-        # Handling input gates
-        for e in parser._graph.in_edges(n, data=True):
-            src, dst, level_change, inbound_idx = e[0], e[1], e[2]["level_change"], e[2]["inbound_idx"]
-
-            if level_change[1] != level:
-                continue
-            elif (src, level_change[0]) in gate_mapping:
-                parent_gate = gate_mapping[(src, level_change[0])][0]["config"]["name"]
-                if child_gate is not None:
-                    if child_gate not in parents:
-                        parents[child_gate] = []
-
-                    if parent_gate != child_gate:
-                        if parent_gate not in parents[child_gate] and gmodel.get_layer(n).__class__.__name__ in ["Conv2D", "Dense"]:
-                            parents[child_gate].append(parent_gate)
-
-                norm[gate_mapping[(src, level_change[0])][0]["config"]["name"]] +=\
-                        compute_act(gmodel.get_layer(n), batch_size, is_input_gate=True, out_gate=out_gate)
-        if (n, level) in gate_mapping: # Handling layers without gates
-            norm[gate_mapping[(n, level)][0]["config"]["name"]] += compute_act(gmodel.get_layer(n), batch_size)
-    """
-
     contributors = {}
 
     for l in l2g:
-        g2l[l2g[l]] = l
+        if gmodel.get_layer(l).__class__.__name__ in ["Conv2D", "Dense"]:
+            g2l[l2g[l]] = l
 
     affecting = parser.get_affecting_layers()
     for child, parents_ in affecting.items():
@@ -375,7 +343,7 @@ def compute_norm(parser, gate_mapping, gmodel, batch_size, targets, groups, inv_
 
     for child, _ in affecting.items():
         if gmodel.get_layer(child[0]).__class__.__name__ == "DepthwiseConv2D":
-            gate = gate_mapping[(child[0], 0)][0]["config"]["name"]
+            gate = gate_mapping[child][0]["config"]["name"]
             norm[gate] += compute_act(gmodel.get_layer(child[0]), batch_size)
             contributors[inv_groups[gate]].add(child[0])
 
@@ -397,7 +365,7 @@ def compute_norm(parser, gate_mapping, gmodel, batch_size, targets, groups, inv_
 
             for l in groups[cgidx]:
                 out_gate = gmodel.get_layer(l.name).gates.numpy()
-                gnorm[gidx] += compute_act(gmodel.get_layer(g2l[l.name]), batch_size, is_input_gate=True, out_gate=out_gate)
+                gnorm[gidx] += compute_act(gmodel.get_layer(g2l[l.name]), batch_size, pruning_input_gate=True, out_gate=out_gate)
 
     final_norm = [0 for _ in range(len(groups))]
     for gidx in range(len(groups)):
@@ -422,6 +390,7 @@ class PruningCallback(keras.callbacks.Callback):
                  period=10,
                  l2g = None,
                  num_remove=1,
+                 enable_distortion_detect=False,
                  fully_random=False,
                  callback_after_deletion=None,
                  compute_norm_func=None,
@@ -441,6 +410,7 @@ class PruningCallback(keras.callbacks.Callback):
         self._num_removed = 0
         self.l2g = l2g
         self.num_remove = num_remove
+        self.enable_distortion_detect = enable_distortion_detect
         self.fully_random = fully_random
         self.callback_after_deletion = callback_after_deletion
         self.compute_norm_func = compute_norm_func
@@ -452,7 +422,116 @@ class PruningCallback(keras.callbacks.Callback):
         else:
             self.logs = None
 
-    def on_train_batch_end(self, batch, logs=None):
+        self.subnets = []
+
+    def build_subnets(self, positions, custom_objects=None):
+
+        self.subnets = []
+        self.inv_l2s = {}
+        for idx in range(len(positions)):
+
+            if idx == 0:
+                _g = [None, positions[idx]]
+            elif idx == len(positions)-1:
+                _g = [positions[idx], None]
+            else:
+                _g = positions[idx-1:idx+1]
+
+            if custom_objects is None:
+                custom_objects = {"SimplePruningGate":SimplePruningGate}
+            parser_ = NNParser(self.gmodel, custom_objects=custom_objects)
+            parser_.parse()
+
+            if _g[0] is None:
+                _g.remove(None)
+                if type(self.gmodel.input) == list:
+                    for in_ in self.gmodel.input:
+                        _g.append(in_.name)
+                else:
+                    _g.append(self.gmodel.input.name)
+            elif _g[-1] is None:
+                _g.remove(None)
+
+                if type(self.gmodel.output) == list:
+                    for out in self.gmodel.output:
+                        for layer in self.gmodel.layers:
+                            if layer.output == out:
+                                _g.append(layer.name)
+                                break
+                else:
+                    for layer in self.gmodel.layers:
+                        if type(layer.output) == type(self.gmodel.output)\
+                            and layer.output.name == self.gmodel.output.name:
+                            _g.append(layer.name)
+                            break
+              
+            v = parser_.traverse()
+            torder_ = {
+                name:idx_
+                for idx_, (name, _) in enumerate(v)
+            }
+            min_t = -1
+            max_t = -1
+            for l_ in _g:
+                if torder_[l_] > max_t:
+                    max_t = torder_[l_]
+                if min_t == -1 or min_t > torder_[l_]:
+                    min_t = torder_[l_]
+
+            def stop_cond(e, inbound, is_edge):
+                if not is_edge:
+                    return False
+                src, dst, level_change, inbound_idx = e[0], e[1], e[2]["level_change"], e[2]["inbound_idx"]
+
+                if not inbound and torder_[dst] > max_t:
+                        return True
+                if inbound and torder_[src] < min_t:
+                    return True
+
+            outbound_cond = lambda e, is_edge: stop_cond(e, False, is_edge)
+            inbound_cond = lambda e, is_edge: stop_cond(e, True, is_edge)
+            sources = [ x for x in parser_._graph.nodes(data=True) if x[1]["layer_dict"]["config"]["name"] in _g ]
+            visit_ = set()
+            for s in sources:
+                if s[1]["nlevel"] == 0:
+                    visit_.add((s[0], 0))
+                else:
+                    for level in range(s[1]["nlevel"]):
+                        visit_.add((s[0], level))
+            visit__ = copy.deepcopy(visit_)
+            v = parser_.traverse(sources=sources, stopping_condition=outbound_cond, previsit=visit__, sync=False)
+
+            visit__ = copy.deepcopy(visit_)
+            v2 = parser_.traverse(sources=sources, stopping_condition=inbound_cond, previsit=visit__, sync=False, inbound=True)
+
+            v = set(v)
+            v2 = set(v2)
+            v = v.intersection(v2)
+            __g = []
+            for i in v:
+                __g.append(i[0])
+
+            __g_instance = [
+                self.gmodel.get_layer(l) for l in __g
+            ]
+
+            for l in __g_instance:
+                if l.name not in self.inv_l2s:
+                    self.inv_l2s[l.name] = []
+                if idx not in self.inv_l2s[l.name]:
+                    self.inv_l2s[l.name].append(idx)
+
+            subnet, inputs, outputs = parser_.get_subnet(__g_instance, self.gmodel)
+            #tf.keras.utils.plot_model(subnet, "subnet"+str(idx)+".png")
+            self.subnets.append((subnet, inputs, outputs))
+
+        self.data_holder = [
+            []
+            for _ in range(len(self.subnets))
+        ]
+
+
+    def on_train_batch_end(self, batch, logs=None, pbar=None):
         self._iter += 1
         if self._iter % self.period == 0 and self.continue_pruning:
 
@@ -467,7 +546,6 @@ class PruningCallback(keras.callbacks.Callback):
                 ]
 
             cscore_ = {}
-            #groups.reverse()
             for gidx, group in enumerate(groups):
 
                 # compute grad based si
@@ -491,17 +569,6 @@ class PruningCallback(keras.callbacks.Callback):
                     cscore = 0.0
 
                 # compute normalization
-                """
-                norm_ = 0
-                for lidx, layer in enumerate(group):
-
-                    gates_ = layer.gates.numpy()
-                    if np.sum(gates_) < 2.0: # min channels.
-                        break
-
-                    norm_ += self.norm[layer.name]
-                """
-
                 if cscore is not None: # To handle cscore is undefined.
                     #cscore = sum_
                     cscore = sum_ / self.norm[gidx]
@@ -515,60 +582,128 @@ class PruningCallback(keras.callbacks.Callback):
                     import sys
                     sys.exit(0)
 
-            for _ in range(self.num_remove):
+            num_removed_channels = 0
+            filtered = set()
+            if self.enable_distortion_detect:
+                indices = set()
+            for __ in range(self.num_remove):
                 min_val = -1
                 min_idx = (-1, -1)
                 for gidx, group in enumerate(groups):
 
                     cscore = cscore_[gidx]
                     gates_ = group[0].gates.numpy()
-                    if np.sum(gates_) < 2.0:
-                        continue
+                    #if np.sum(gates_) < 2.0:
+                    #    continue
                     if cscore is not None:
                         if self.fully_random:
                             cscore = np.random.rand(*tuple(cscore.shape))
                         else:
                             min_val, min_idx = find_min(cscore, gates_, min_val, min_idx, gidx, cscore.shape[0])
 
+                filtered.add(min_idx)
                 min_group = groups[min_idx[0]]
                 for min_layer in min_group:
                     gates_ = min_layer.gates.numpy()
                     gates_[min_idx[1]] = 0.0
                     min_layer.gates.assign(gates_)
+                num_removed_channels += 1
+                self._num_removed += 1
+
+                exit = False
+                if self.enable_distortion_detect:
+                    for min_layer in min_group:
+                        if min_layer.name not in self.inv_l2s:
+                            continue
+
+                        subnet_idx = self.inv_l2s[min_layer.name]
+                        if type(subnet_idx) == list:
+                            for idx in subnet_idx:
+                                indices.add(idx)
+                        else:
+                            indices.add(subnet_idx)
+
+                    if __ % 10 == 0:
+                        total_diff = 0
+                        for subnet_idx in indices:
+                            sum_diff = 0
+                            data_holder = self.data_holder[subnet_idx]
+                            for bidx  in range(len(data_holder)):
+                                data = data_holder[bidx]
+                                ins, outs = data
+                                subnet, _, _ = self.subnets[subnet_idx]
+                                if type(subnet.input) != list:
+                                    output = subnet(ins[0])
+                                else:
+                                    output = subnet(ins)
+
+                                if type(subnet.output) != list:
+                                    #left = tf.reshape(output, (output.shape[0], -1))
+                                    #right = tf.reshape(outs[0], (outs[0].shape[0], -1))
+                                    left = output
+                                    right = outs[0]
+                                    sum_diff += tf.math.reduce_mean(tf.keras.losses.mean_squared_error(left, right))
+                                    #sum_diff += tf.abs(tf.norm(left) - tf.norm(right)) / tf.norm(left)
+                                else:
+                                    sum_diff_ = 0
+                                    for left, right in zip(output, outs):
+                                        sum_diff_ += tf.math.reduce_mean(tf.keras.losses.mean_squared_error(left, right))
+                                        #sum_diff += tf.abs(tf.norm(left) - tf.norm(right)) / tf.norm(left)
+                                    sum_diff += sum_diff_ / len(output)
+
+                            sum_diff /= len(data_holder)
+                            total_diff += sum_diff
+
+                        if total_diff > 1.0:
+                            exit = True
+                        else:
+                            indices.clear()
+                            filtered.clear()
+
+                if exit: # restore the last removed channel
+                    for min_idx_ in filtered:
+                        min_group = groups[min_idx_[0]]
+                        for min_layer in min_group:
+                            gates_ = min_layer.gates.numpy()
+                            gates_[min_idx_[1]] = 1.0
+                            min_layer.gates.assign(gates_)
+
+                        self._num_removed -= 1
+                        num_removed_channels -= 1
+                    break
 
                 # score update
-                cscore_[min_idx[0]] *= self.norm[min_idx[0]]
-                visit = set()
-                base_norm_sum = 0
-                delta1 = 0
-                delta2 = 0
-                #for min_layer in min_group:
-                #    w = self.gmodel.get_layer(g2l[min_layer.name]).get_weights()[0].shape
-                #    delta += float(max(self.batch_size * np.prod(list(w[0:2])), 1.0)) / 1e6
-                for cbt in contributors[min_idx[0]]:
-                    if self.gmodel.get_layer(cbt).__class__.__name__ not in ["Conv2D", "DepthwiseConv2D"]:
-                        continue
-                    w = self.gmodel.get_layer(cbt).get_weights()[0].shape
-                    if self.gmodel.get_layer(cbt).__class__.__name__ == "Conv2D":
-                        delta1 += float(max(self.batch_size * np.prod(list(w[0:2])), 1.0)) / 1e6
-                    else:
-                        delta2 += float(max(self.batch_size * np.prod(list(w[0:2])), 1.0)) / 1e6
-                self.norm[min_idx[0]] -= (delta1+delta2)
-                cscore_[min_idx[0]] /= self.norm[min_idx[0]]
-
-                for min_layer in min_group:
-                    for p in parents[min_layer.name]:
-                        if cscore_[self.inv_groups[p]] is None:
+                if self.compute_norm_func is not None:
+                    cscore_[min_idx[0]] *= self.norm[min_idx[0]]
+                    visit = set()
+                    base_norm_sum = 0
+                    delta1 = 0
+                    delta2 = 0
+                    #for min_layer in min_group:
+                    #    w = self.gmodel.get_layer(g2l[min_layer.name]).get_weights()[0].shape
+                    #    delta += float(max(self.batch_size * np.prod(list(w[0:2])), 1.0)) / 1e6
+                    for cbt in contributors[min_idx[0]]:
+                        if self.gmodel.get_layer(cbt).__class__.__name__ not in ["Conv2D", "DepthwiseConv2D", "Dense"]:
                             continue
+                        w = self.gmodel.get_layer(cbt).get_weights()[0].shape
+                        if self.gmodel.get_layer(cbt).__class__.__name__ == "Conv2D":
+                            delta1 += float(max(self.batch_size * np.prod(list(w[0:2])), 1.0)) / 1e6
+                        else:
+                            delta2 += float(max(self.batch_size * np.prod(list(w[0:2])), 1.0)) / 1e6
+                    self.norm[min_idx[0]] -= (delta1+delta2)
+                    cscore_[min_idx[0]] /= self.norm[min_idx[0]]
 
-                        if (min_idx[0], self.inv_groups[p]) in visit or min_idx[0] == self.inv_groups[p]:
-                            continue
-                        visit.add((min_idx[0], self.inv_groups[p]))
-                        cscore_[self.inv_groups[p]] *= self.norm[self.inv_groups[p]]
-                        self.norm[self.inv_groups[p]] -= delta1
-                        cscore_[self.inv_groups[p]] /= self.norm[self.inv_groups[p]]
+                    for min_layer in min_group:
+                        for p in parents[min_layer.name]:
+                            if cscore_[self.inv_groups[p]] is None:
+                                continue
 
-                self._num_removed += 1
+                            if (min_idx[0], self.inv_groups[p]) in visit or min_idx[0] == self.inv_groups[p]:
+                                continue
+                            visit.add((min_idx[0], self.inv_groups[p]))
+                            cscore_[self.inv_groups[p]] *= self.norm[self.inv_groups[p]]
+                            self.norm[self.inv_groups[p]] -= delta1
+                            cscore_[self.inv_groups[p]] /= self.norm[self.inv_groups[p]]
 
                 if self.callback_after_deletion is not None:
                    self.callback_after_deletion(self._num_removed)
@@ -582,15 +717,21 @@ class PruningCallback(keras.callbacks.Callback):
                 if not self.continue_pruning:
                     layer.collecting = False
 
-            if not self.continue_pruning:
-                print("SPARSITY:", compute_sparsity(groups))
+            self.data_holder = [
+                []
+                for _ in range(len(self.subnets))
+            ]
+
+            if pbar is not None:
+                pbar.set_postfix({"Sparsity":compute_sparsity(groups), "Num removed(last step)":num_removed_channels})
 
             # for fit
             if not self.continue_pruning and hasattr(self, "model") and hasattr(self.model, "stop_training"):
                 self.model.stop_training = True
-            return True
+
+            return num_removed_channels
         else:
-            return False
+            return 0
 
 def make_group_fisher(model,
                       model_handler,
@@ -601,6 +742,7 @@ def make_group_fisher(model,
                       target_ratio=0.5,
                       enable_norm=True,
                       num_remove=1,
+                      enable_distortion_detect=False,
                       fully_random=False,
                       save_steps=-1,
                       save_prefix=None,
@@ -659,6 +801,7 @@ def make_group_fisher(model,
         target_ratio=target_ratio,
         l2g=l2g,
         num_remove=num_remove,
+        enable_distortion_detect=enable_distortion_detect,
         compute_norm_func=norm_func,
         fully_random=fully_random,
         callback_after_deletion=cbk,
@@ -667,18 +810,29 @@ def make_group_fisher(model,
         logging=logging)
 
 
-def prune_step(X, model, teacher_logits, y, pc):
+def prune_step(X, model, teacher_logits, y, pc, print_by_pruning, pbar=None):
 
-    for layer in model.layers:
-        if layer.__class__ == SimplePruningGate:
-            layer.trainable = True
-            layer.collecting = True
+    if pc.continue_pruning:
+        for layer in model.layers:
+            if layer.__class__ == SimplePruningGate:
+                layer.trainable = True
+                layer.collecting = True
 
-    tape, loss = train_step(X, model, teacher_logits, y)
-    _ = tape.gradient(loss, model.trainable_variables)
-    pruned = pc.on_train_batch_end(None)
+        tape, loss, position_output = train_step(X, model, teacher_logits, y, ret_last_tensor=True)
+        _ = tape.gradient(loss, model.trainable_variables)
+        ret = pc.on_train_batch_end(None, pbar=pbar)
 
-    for layer in model.layers:
-        if layer.__class__ == SimplePruningGate:
-            layer.trainable = False
-            layer.collecting = False
+        for idx in range(len(pc.subnets)):
+            pc.data_holder[idx].append(position_output[idx])
+
+        for layer in model.layers:
+            if layer.__class__ == SimplePruningGate:
+                layer.trainable = False
+                layer.collecting = False
+    else:
+        ret = 0        
+
+    if print_by_pruning:
+        return ret
+    else:
+        return None

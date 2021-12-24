@@ -348,7 +348,8 @@ class NNParser(object):
                  node_callbacks=None,
                  neighbor_callbacks=None,
                  sync=True,
-                 stopping_condition=None):
+                 stopping_condition=None,
+                 previsit=None):
         """A general traversal algorithm for NNs.
 
         if `sync` is True, it traverses a neural network graph in similar order of NN execution.
@@ -371,7 +372,10 @@ class NNParser(object):
         """
 
         visit = []
-        visit_ = set()
+        if previsit is None:
+            visit_ = set()
+        else:
+            visit_ = previsit
 
         # if sources is None, then we start from leaves.
         if sources is None:
@@ -414,7 +418,7 @@ class NNParser(object):
                         callback(e)
 
                 if stopping_condition is not None and stopping_condition(e, is_edge=True):
-                    break
+                    continue
 
                 if inbound:
                     if level_change[1] == level and (src, level_change[0]) not in visit_:
@@ -478,6 +482,132 @@ class NNParser(object):
         """
         return copy.deepcopy(self._graph)
 
+
+    def get_leaves(self, block):
+        block_set = set([l.name for l in block])
+        input_leaves = []
+        output_leaves = []
+        for l in block:
+            is_input_leaf = True
+            is_output_leaf = False
+            for e in self._graph.in_edges(l.name, data=True): # inbound
+                src, dst, level_change, inbound_idx = e[0], e[1], e[2]["level_change"], e[2]["inbound_idx"]
+                if src in block_set:
+                    is_input_leaf = False
+                    break
+            if not is_input_leaf:
+                is_output_leaf = True
+                for e in self._graph.out_edges(l.name, data=True): # inbound
+                    src, dst, level_change, inbound_idx = e[0], e[1], e[2]["level_change"], e[2]["inbound_idx"]
+                    if dst in block_set:
+                        is_output_leaf = False
+                        break
+
+            if is_input_leaf:
+                input_leaves.append(l.name)
+            elif is_output_leaf:
+                output_leaves.append(l.name)
+
+        return input_leaves, output_leaves
+
+    def get_subnet(self, block, model):
+        # block: list of names
+        block_set = set([l.name for l in block])
+        inputs, outputs = self.get_leaves(block)
+
+        # check `inputs` are sufficient to find `outputs`
+        new_inputs = []
+        def check(n, level):
+            if n not in block_set and n not in new_inputs:
+                new_inputs.append(n)
+        def stop_check(e, is_edge):
+            if not is_edge:
+                return False
+            if e[1] in new_inputs or e[1] in inputs:
+                return True
+            return False
+
+        sources_for_check = [ x for x in self._graph.nodes(data=True) if x[1]["layer_dict"]["config"]["name"] in outputs ]
+        v = self.traverse(sources=sources_for_check, node_callbacks=[check], stopping_condition=stop_check, inbound=True)
+        for v_ in v:
+            if v_[0] not in block_set:
+                block_set.add(v_[0])
+                block.append(model.get_layer(v_[0]))
+        inputs += new_inputs
+
+        layers = {
+            l.name:l for l in block
+        }
+        for new in new_inputs:
+            layers[new] = model.get_layer(new)
+
+        # define input_tensor
+        in_tensors = {}
+        for in_ in inputs:
+            """
+            if type(layers[in_].input) == list:
+                in_tensors[in_] = []
+                for i_ in layers[in_].input:
+                    if i_.shape[0] is None:
+                        in_tensors[in_].append(tf.keras.Input(i_.shape[1:]))
+                    else:
+                        in_tensors[in_].append(tf.keras.Input(i_.shape))
+            else:
+                if layers[in_].input.shape[0] is None:
+                    in_tensors[in_] = tf.keras.Input(shape=layers[in_].input.shape[1:])
+                else:
+                    in_tensors[in_] = tf.keras.Input(shape=layers[in_].input.shape)
+            """
+            if layers[in_].output.shape[0] is None:
+                in_tensors[in_] = tf.keras.Input(shape=layers[in_].output.shape[1:], name=in_+"_inputlayer")
+            else:
+                in_tensors[in_] = tf.keras.Input(shape=layers[in_].output.shape, name=in_+"_inputlayer")
+
+        out_tensors = {}
+
+        def callback_(n, level):
+            if n in in_tensors:
+                assert n not in out_tensors
+                out_tensors.update({
+                    (n,level):in_tensors[n]
+                })
+            else: 
+                inputs_ = []
+                for e in self._graph.in_edges(n, data=True):
+                    src, dst, level_change, inbound_idx, tidx = e[0], e[1], e[2]["level_change"], e[2]["inbound_idx"], e[2]["tensor"]
+                    if level_change[1] == level:
+                        ot = out_tensors[(src, level_change[0])]
+                        if type(ot) == tuple:
+                            ot = ot[tidx]
+                        inputs_.append(ot)
+                if len(inputs_) == 1:
+                    inputs_ = inputs_[0]
+
+                out_tensors.update({
+                    (n,level):layers[n](inputs_)
+                })
+
+        def stop_cond(e, is_edge):
+            if not is_edge:
+                return False
+            src, dst, level_change, inbound_idx = e[0], e[1], e[2]["level_change"], e[2]["inbound_idx"]
+            if dst not in block_set:
+                return True
+            if src in outputs:
+                return True
+            return False
+
+        sources = [ x for x in self._graph.nodes(data=True) if x[1]["layer_dict"]["config"]["name"] in inputs ]
+        self.traverse(sources=sources, node_callbacks=[callback_], stopping_condition=stop_cond)
+
+        #TODO
+        outputs_ = [
+            out_tensors[(out, 0)] for out in outputs
+        ]
+        inputs_ = [
+            in_tensors[in_] for in_ in inputs
+        ]
+        return keras.Model(inputs=inputs_, outputs=outputs_), inputs, outputs
 
 if __name__ == "__main__":
 
