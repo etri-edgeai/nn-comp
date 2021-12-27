@@ -556,9 +556,6 @@ class PruningCallback(keras.callbacks.Callback):
                     grad = 0
                     for lidx, layer in enumerate(group):
                         gates_ = layer.gates.numpy()
-                        if np.sum(gates_) < 2.0: # min channels.
-                            break
-
                         grad += layer.grad_holder[bidx]
 
                     if type(grad) == int and grad == 0:
@@ -593,8 +590,6 @@ class PruningCallback(keras.callbacks.Callback):
 
                     cscore = cscore_[gidx]
                     gates_ = group[0].gates.numpy()
-                    #if np.sum(gates_) < 2.0:
-                    #    continue
                     if cscore is not None:
                         if self.fully_random:
                             cscore = np.random.rand(*tuple(cscore.shape))
@@ -822,8 +817,9 @@ def prune_step(X, model, teacher_logits, y, pc, print_by_pruning, pbar=None):
         _ = tape.gradient(loss, model.trainable_variables)
         ret = pc.on_train_batch_end(None, pbar=pbar)
 
-        for idx in range(len(pc.subnets)):
-            pc.data_holder[idx].append(position_output[idx])
+        if pc.enable_distortion_detect:
+            for idx in range(len(pc.subnets)):
+                pc.data_holder[idx].append(position_output[idx])
 
         for layer in model.layers:
             if layer.__class__ == SimplePruningGate:
