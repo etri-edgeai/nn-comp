@@ -9,7 +9,6 @@ import numpy as np
 np.random.seed(1234)
 import imgaug as ia
 ia.seed(1234)
-import efficientnet.tfkeras
 import os
 import argparse
 import cv2
@@ -290,6 +289,8 @@ def run():
         n_classes = 200
     elif args.dataset == "imagenet":
         n_classes = 1000
+    elif args.dataset == "imagenet2012":
+        n_classes = 1000
     elif args.dataset == "oxford_iiit_pet":
         n_classes = 37
     elif args.dataset == "cars196":
@@ -299,10 +300,14 @@ def run():
 
     dataset = args.dataset
     if args.mode == "test":
-        if hasattr(model_handler, "get_custom_objects"):
-            model = tf.keras.models.load_model(args.model_path, custom_objects=model_handler.get_custom_objects())
+
+        if args.dataset == "imagenet2012" and args.model_path is None:
+            model = model_handler.get_model(dataset="imagenet2012")
         else:
-            model = tf.keras.models.load_model(args.model_path)
+            if hasattr(model_handler, "get_custom_objects"):
+                model = tf.keras.models.load_model(args.model_path, custom_objects=model_handler.get_custom_objects())
+            else:
+                model = tf.keras.models.load_model(args.model_path)
 
         model_handler.compile(model)
         _, _, test_data_gen = load_data(dataset, model_handler, n_classes=n_classes)

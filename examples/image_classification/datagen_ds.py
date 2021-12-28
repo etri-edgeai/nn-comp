@@ -25,9 +25,10 @@ def cub_parse_fn(example_serialized):
     #image = tf.image.convert_image_dtype(image, dtype=tf.float32)
 
     image = _aspect_preserving_resize(image, 256)
-    image = _central_crop([image], 256, 256)[0]
+    image = _central_crop([image], 224, 224)[0]
 
     return {"image": image, "label":example_serialized["label"]}
+
 
 class DataGenerator(keras.utils.Sequence):
     def __init__(self,
@@ -55,7 +56,7 @@ class DataGenerator(keras.utils.Sequence):
             self.ds = self._ds.shuffle(1024)
         else:
 
-            if self.dataset in ["caltech_birds2011", "oxford_iiit_pet", "cars196", "stanford_dogs"]:
+            if self.dataset in ["caltech_birds2011", "oxford_iiit_pet", "cars196", "stanford_dogs", "imagenet2012"]:
                 ds = ds.shuffle(1024)
                 ds = ds.apply(
                     tf.data.experimental.map_and_batch(

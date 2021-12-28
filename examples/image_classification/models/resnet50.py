@@ -24,6 +24,12 @@ def get_batch_size(dataset):
 def get_name():
     return "resnet50"
 
+def get_optimizer(mode=0):
+    if mode == 0:
+        return Adam(lr=0.0001)
+    elif mode == 1:
+        return Adam(lr=0.00001)
+
 def preprocess_func(img, dim):
     img = tf.keras.applications.resnet.preprocess_input(img)
     #img = cv2.resize(img, (height, width), interpolation=cv2.INTER_CUBIC)

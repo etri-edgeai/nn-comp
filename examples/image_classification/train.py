@@ -47,11 +47,14 @@ def load_data(dataset, model_handler, training_augment=True, batch_size=-1, n_cl
         test_data_generator = ds_val
     else:
         ds_train = tfds.load(dataset, split="train").cache()
-        ds_val = tfds.load(dataset, split="test").cache()
+        if dataset == "imagenet2012":
+            ds_val = tfds.load(dataset, split="validation").cache()
+        else:
+            ds_val = tfds.load(dataset, split="test").cache()
         train_examples = None
         val_examples = None
         is_batched = False
-        
+
         train_data_generator = DataGenerator(
             ds_train,
             dataset=dataset,
