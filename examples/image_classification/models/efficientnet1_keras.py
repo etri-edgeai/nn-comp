@@ -21,7 +21,7 @@ def get_batch_size(dataset):
     return batch_size
 
 def get_name():
-    return "efnet"
+    return "efnet1"
 
 def preprocess_func(img, shape):
     #img = img.astype(np.float32)/255.

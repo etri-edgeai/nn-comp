@@ -46,10 +46,11 @@ def load_data(dataset, model_handler, training_augment=True, batch_size=-1, n_cl
         valid_data_generator = ds_val
         test_data_generator = ds_val
     else:
-        ds_train = tfds.load(dataset, split="train").cache()
         if dataset == "imagenet2012":
-            ds_val = tfds.load(dataset, split="validation").cache()
+            ds_train = tfds.load(dataset, split="train")
+            ds_val = tfds.load(dataset, split="validation")
         else:
+            ds_train = tfds.load(dataset, split="train").cache()
             ds_val = tfds.load(dataset, split="test").cache()
         train_examples = None
         val_examples = None
@@ -240,6 +241,7 @@ def iteration_based_train(dataset, model, model_handler, max_iters, teacher=None
                         pbar.update(ret)
                 else:
                     pbar.update(1)
+
                 if stopping_callback is not None and stopping_callback(idx, global_step):
                     done = True
                     break
