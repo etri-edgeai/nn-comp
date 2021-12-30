@@ -50,10 +50,10 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
     for gidx, (g, _) in enumerate(groups):
         gates_info.append(gated_model.get_layer(l2g[g[0]]).gates.numpy().shape[0])
         n_channels_group[gidx] = gates_info[-1]
+        n_channels += gates_info[-1]
         for g_ in g:
             gate = gated_model.get_layer(l2g[g_])
             gates_weights[l2g[g_]] = gate.gates.numpy()
-            n_channels += gate.gates.shape[0]
     score = [0.0 for _ in range(n_channels)]
   
     local_base = 0

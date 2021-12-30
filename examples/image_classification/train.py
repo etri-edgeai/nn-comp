@@ -206,7 +206,7 @@ def iteration_based_train(dataset, model, model_handler, max_iters, teacher=None
     callbacks_ = model_handler.get_callbacks(iters)
     optimizer = model_handler.get_optimizer()
 
-    with tqdm(total=max_iters, ncols=160) as pbar:
+    with tqdm(total=max_iters, ncols=120) as pbar:
         while global_step < max_iters: 
             # start with new epoch.
             done = False
