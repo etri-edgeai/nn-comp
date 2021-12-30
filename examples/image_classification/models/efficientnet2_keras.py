@@ -21,7 +21,7 @@ def get_batch_size(dataset):
     return batch_size
 
 def get_name():
-    return "efnet"
+    return "efnet2"
 
 def preprocess_func(img, shape):
     #img = img.astype(np.float32)/255.
@@ -46,7 +46,7 @@ def get_model(dataset, n_classes=100):
         model.add(efnb0)
         model.add(GlobalAveragePooling2D())
         if dataset == "cifar100":
-            model.add(Dropout(0.5))
+            model.add(Dropout(0.75))
         else:
             model.add(Dropout(0.25))
         model.add(Dense(n_classes, activation='softmax'))

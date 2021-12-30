@@ -49,6 +49,7 @@ def prune(
     fully_random=False,
     num_remove=1,
     enable_distortion_detect=False,
+    norm_update=False,
     print_by_pruning=False,
     target_ratio=0.5,
     min_steps=-1,
@@ -66,13 +67,13 @@ def prune(
         pos_str = str(position_mode)
 
     if label_only:
-        postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_gf_label_only_"+str(target_ratio)
+        postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_gf_label_only_"+str(target_ratio)+"_"+str(num_remove)
     elif method == "curl":
         postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_curl_"+str(target_ratio)
     elif method == "hrank":
         postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_hrank_"+str(target_ratio)
     elif method == "gf":
-        postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_gf"+"_"+str(num_blocks)+"_"+str(target_ratio)
+        postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_gf"+"_"+str(num_blocks)+"_"+str(target_ratio)+"_"+str(num_remove)
     else:
         raise NotImplementedError("Method name error!")
 
@@ -111,6 +112,7 @@ def prune(
             enable_norm=True,
             num_remove=num_remove,
             enable_distortion_detect=enable_distortion_detect,
+            norm_update=norm_update,
             fully_random=fully_random,
             custom_objects=model_handler.get_custom_objects(),
             save_steps=save_steps,
@@ -169,7 +171,7 @@ def prune(
         with keras.utils.custom_object_scope(custom_object_scope):
             t_model = M.add_prefix(copied_model, "t_")
 
-        if method == "gf":
+        if method == "gf" and enable_distortion_detect:
             pc.build_subnets(positions, custom_objects=model_handler.get_custom_objects())
 
         t_outputs = []
@@ -192,7 +194,7 @@ def prune(
             else:
                 g_outputs.append(gmodel.get_layer(p).output)
 
-        if method == "gf":
+        if method == "gf" and enable_distortion_detect:
             subnet_outputs = []
             for subnet, inputs, outputs in pc.subnets:
                 ins = []
@@ -211,10 +213,10 @@ def prune(
     else:
         tt = None
         gg = gmodel
-  
-    #total_channels = get_num_all_channels(pc.gate_groups)
+ 
     total_channels = get_total_channels(ordered_groups, gmodel)
     num_target_channels = math.ceil(total_channels * target_ratio)
+    print(total_channels, num_target_channels)
     if print_by_pruning:
         max_iters = num_target_channels
     else:
@@ -223,8 +225,10 @@ def prune(
         else:
             max_iters = (num_target_channels // num_remove + int(num_target_channels % num_remove > 0)) * period
 
+    print(max_iters, min_steps)
     if min_steps > max_iters:
         max_iters = min_steps
+    print("FINAL max_iters:", max_iters)
     iteration_based_train(
         dataset,
         gg,
@@ -268,6 +272,7 @@ def run():
     parser.add_argument('--overwrite', action='store_true')
     parser.add_argument('--num_remove', type=int, default=500, help='model')
     parser.add_argument('--enable_distortion_detect', action='store_true')
+    parser.add_argument('--norm_update', action='store_true')
     parser.add_argument('--print_by_pruning', action='store_true')
     parser.add_argument('--num_blocks', type=int, default=5, help='model')
     parser.add_argument('--period', type=int, default=25, help='model')
@@ -275,6 +280,10 @@ def run():
     parser.add_argument('--target_ratio', type=float, default=0.5, help='model')
     parser.add_argument('--save_steps', type=int, default=-1, help='model')
     args = parser.parse_args()
+
+    import json
+    with open("args.log", "w") as file_:
+        json.dump(vars(args), file_)
 
     if args.config is not None:
         with open(args.config, 'r') as stream:
@@ -357,13 +366,13 @@ def run():
         if not os.path.exists(iter_dir):
             os.mkdir(iter_dir)
 
-        if args.model_path is None:
+        if args.model_path is None and args.dataset != "imagenet2012":
             from pathset import paths
             model_path = paths[args.dataset][args.model_name]
         else:
             model_path = args.model_path
 
-        if args.dataset != "imagenet":
+        if "imagenet" not in args.dataset:
             model = tf.keras.models.load_model(model_path, custom_objects=model_handler.get_custom_objects())
         else:
             model = model_handler.get_model(dataset, n_classes=n_classes)
@@ -379,6 +388,7 @@ def run():
             fully_random=args.fully_random,
             num_remove=args.num_remove,
             enable_distortion_detect=args.enable_distortion_detect,
+            norm_update=args.norm_update,
             print_by_pruning=args.print_by_pruning,
             target_ratio=args.target_ratio,
             method=method,

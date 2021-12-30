@@ -89,13 +89,14 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
     total_ = math.ceil(n_channels * target_ratio)
     with tqdm(total=total_, ncols=80) as pbar:
         while float(n_removed) / n_channels < target_ratio:
-            if n_removed % save_steps == 0:
+            if save_steps != -1 and n_removed % save_steps == 0:
                 for key in gates_weights:
                     layer = gated_model.get_layer(key)
                     layer.gates.assign(gates_weights[key])
 
                 cmodel = parser.cut(gated_model)
                 tf.keras.models.save_model(cmodel, save_dir+"/"+save_prefix+"_"+str(n_removed)+".h5")
+                tf.keras.models.save_model(gated_model, save_dir+"/"+save_prefix+"_"+str(n_removed)+"_gated_model.h5")
 
             val = find_min(score, gates_info, n_channels_group, n_removed_group, len(gates_info))
             local_base = 0

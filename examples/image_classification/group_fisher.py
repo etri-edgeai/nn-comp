@@ -736,6 +736,7 @@ def make_group_fisher(model,
                       period=25,
                       target_ratio=0.5,
                       enable_norm=True,
+                      norm_update=False,
                       num_remove=1,
                       enable_distortion_detect=False,
                       fully_random=False,
@@ -780,13 +781,18 @@ def make_group_fisher(model,
             assert save_prefix is not None
             cmodel = parser.cut(gmodel)
             tf.keras.models.save_model(cmodel, save_dir+"/"+save_prefix+"_"+str(num_removed)+".h5")
+            tf.keras.models.save_model(gmodel, save_dir+"/"+save_prefix+"_"+str(num_removed)+"_gated_model.h5")
+            del cmodel
 
     if save_steps == -1:
         cbk = None
     else:
         cbk = callback_after_deletion_
 
-    norm_func = lambda : compute_norm(parser, gate_mapping, gmodel, batch_size, targets, groups, inv_groups, l2g)
+    if norm_update:
+        norm_func = lambda : compute_norm(parser, gate_mapping, gmodel, batch_size, targets, groups, inv_groups, l2g)
+    else:
+        norm_func = None
     return gmodel, model, parser, ordered_groups, torder, PruningCallback(
         norm,
         targets,
