@@ -25,11 +25,18 @@ from nncompress.backend.tensorflow_.transformation.pruning_parser import StopGra
 from nncompress import backend as M
 
 from curl import apply_curl
+from hrank import apply_hrank
 from group_fisher import make_group_fisher, add_gates, prune_step, compute_positions, get_num_all_channels
 from loader import get_model_handler
 
 from train import load_data, train, iteration_based_train
 
+def get_total_channels(groups, model):
+    total = 0
+    for g in groups:
+        layer = model.get_layer(g[0][0])
+        total += layer.filters
+    return total
 
 def prune(
     dataset,
@@ -45,7 +52,7 @@ def prune(
     print_by_pruning=False,
     target_ratio=0.5,
     min_steps=-1,
-    curl=False,
+    method="gf",
     finetune=False,
     period=25,
     n_classes=100,
@@ -59,11 +66,15 @@ def prune(
         pos_str = str(position_mode)
 
     if label_only:
-        postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_gf_"+str(target_ratio)
-    elif curl:
+        postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_gf_label_only_"+str(target_ratio)
+    elif method == "curl":
         postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_curl_"+str(target_ratio)
+    elif method == "hrank":
+        postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_hrank_"+str(target_ratio)
+    elif method == "gf":
+        postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_gf"+"_"+str(num_blocks)+"_"+str(target_ratio)
     else:
-        postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_ours"+"_"+str(num_blocks)+"_"+str(target_ratio)
+        raise NotImplementedError("Method name error!")
 
     _, _, test_data_gen = load_data(dataset, model_handler, batch_size=model_handler.batch_size, n_classes=n_classes)
     def validate(model_):
@@ -73,14 +84,24 @@ def prune(
         else:
             return model_.evaluate(test_data_gen, verbose=1)[1]
 
-    if curl:
+    if method == "curl":
         gmodel, copied_model, l2g, ordered_groups, torder, parser, _ = add_gates(model, custom_objects=model_handler.get_custom_objects())
         backup = model_handler.batch_size
         model_handler.batch_size = 256
         train_data_generator_, _, _ = load_data(dataset, model_handler, training_augment=False, n_classes=n_classes)
         model_handler.batch_size = backup
         apply_curl(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio, save_dir+"/pruning_steps", model_handler.get_name()+postfix, save_steps=save_steps)
-    else:
+
+    elif method == "hrank":
+
+        gmodel, copied_model, l2g, ordered_groups, torder, parser, _ = add_gates(model, custom_objects=model_handler.get_custom_objects())
+        backup = model_handler.batch_size
+        model_handler.batch_size = 256
+        train_data_generator_, _, _ = load_data(dataset, model_handler, training_augment=False, n_classes=n_classes)
+        model_handler.batch_size = backup
+        apply_hrank(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio, save_dir+"/pruning_steps", model_handler.get_name()+postfix, save_steps=save_steps)
+
+    elif method == "gf":
         gmodel, copied_model, parser, ordered_groups, torder, pc = make_group_fisher(
             model,
             model_handler,
@@ -98,7 +119,7 @@ def prune(
             logging=False)
 
     def callback_before_update(idx, global_step, X, model_, teacher_logits, y, pbar):
-        if curl:
+        if method in ["curl", "hrank"]:
             return
 
         if distillation:
@@ -119,7 +140,7 @@ def prune(
 
     def stopping_callback(idx, global_step):
         if min_steps != -1:
-            if global_step >= min_steps and not pc.continue_pruning:
+            if global_step >= min_steps and (method in ["curl", "hrank"] or not pc.continue_pruning):
                 return True
             else:
                 return False
@@ -148,7 +169,8 @@ def prune(
         with keras.utils.custom_object_scope(custom_object_scope):
             t_model = M.add_prefix(copied_model, "t_")
 
-        pc.build_subnets(positions, custom_objects=model_handler.get_custom_objects())
+        if method == "gf":
+            pc.build_subnets(positions, custom_objects=model_handler.get_custom_objects())
 
         t_outputs = []
         for p in positions:
@@ -170,17 +192,18 @@ def prune(
             else:
                 g_outputs.append(gmodel.get_layer(p).output)
 
-        subnet_outputs = []
-        for subnet, inputs, outputs in pc.subnets:
-            ins = []
-            for in_ in inputs:
-                ins.append(gmodel.get_layer(in_).output)
-            
-            outs = []
-            for out_ in outputs:
-                outs.append(gmodel.get_layer(out_).output)
-            subnet_outputs.append((ins, outs))
-        g_outputs.append(subnet_outputs)
+        if method == "gf":
+            subnet_outputs = []
+            for subnet, inputs, outputs in pc.subnets:
+                ins = []
+                for in_ in inputs:
+                    ins.append(gmodel.get_layer(in_).output)
+ 
+                outs = []
+                for out_ in outputs:
+                    outs.append(gmodel.get_layer(out_).output)
+                subnet_outputs.append((ins, outs))
+            g_outputs.append(subnet_outputs)
        
         tt = tf.keras.Model(t_model.input, [t_model.output]+t_outputs)
         tt.trainable = False
@@ -189,7 +212,8 @@ def prune(
         tt = None
         gg = gmodel
   
-    total_channels = get_num_all_channels(pc.gate_groups)
+    #total_channels = get_num_all_channels(pc.gate_groups)
+    total_channels = get_total_channels(ordered_groups, gmodel)
     num_target_channels = math.ceil(total_channels * target_ratio)
     if print_by_pruning:
         max_iters = num_target_channels
@@ -239,7 +263,7 @@ def run():
     parser.add_argument('--label_only', action='store_true')
     parser.add_argument('--distillation', action='store_true')
     parser.add_argument('--fully_random', action='store_true')
-    parser.add_argument('--curl', action='store_true')
+    parser.add_argument('--method', type=str, default="gf", help="method")
     parser.add_argument('--finetune', action='store_true')
     parser.add_argument('--overwrite', action='store_true')
     parser.add_argument('--num_remove', type=int, default=500, help='model')
@@ -298,6 +322,7 @@ def run():
     elif args.dataset == "stanford_dogs":
         n_classes = 120
 
+    method = args.method
     dataset = args.dataset
     if args.mode == "test":
 
@@ -356,7 +381,7 @@ def run():
             enable_distortion_detect=args.enable_distortion_detect,
             print_by_pruning=args.print_by_pruning,
             target_ratio=args.target_ratio,
-            curl=args.curl,
+            method=method,
             finetune=args.finetune,
             period=args.period,
             n_classes=n_classes,
