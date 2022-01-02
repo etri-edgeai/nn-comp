@@ -590,6 +590,8 @@ class PruningCallback(keras.callbacks.Callback):
 
                     cscore = cscore_[gidx]
                     gates_ = group[0].gates.numpy()
+                    if np.sum(gates_) < 2.0:
+                        continue
                     if cscore is not None:
                         if self.fully_random:
                             cscore = np.random.rand(*tuple(cscore.shape))
