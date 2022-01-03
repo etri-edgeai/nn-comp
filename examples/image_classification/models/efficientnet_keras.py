@@ -78,3 +78,18 @@ def get_train_epochs(finetune=False):
         return 50
     else:
         return 100
+
+def fix_mean_variance():
+    return tf.convert_to_tensor([[[[0.485, 0.456, 0.406]]]]), tf.convert_to_tensor([[[[0.229, 0.224, 0.225]]]])
+
+def get_heuristic_positions():
+
+    return [
+        "block1a_project_bn",
+        "block2b_add",
+        "block3b_add",
+        "block4c_add",
+        "block5c_add",
+        "block6d_add",
+        "top_activation"
+    ]

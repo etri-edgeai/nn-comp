@@ -123,25 +123,59 @@ def add_gates(model, custom_objects=None, avoid=None):
         #ordered_groups.append((g, torder[g_[0]]))
     ordered_groups = sorted(ordered_groups, key=lambda x: x[1])
 
+    # ready for collecting
+    for layer in gmodel.layers:
+        if layer.__class__ == SimplePruningGate:
+            layer.grad_holder = []
+            layer.collecting = False
+
     return gmodel, model, l2g, ordered_groups, torder, parser, gate_mapping
 
 
-def compute_positions(model, ordered_groups, torder, parser, position_mode, num_blocks):
+def compute_positions(model, ordered_groups, torder, parser, position_mode, num_blocks, heuristic_positions=None):
 
-    convs = [
-        layer.name for layer in model.layers if "Conv2D" in layer.__class__.__name__
-    ]
+    if num_blocks == -1: # heuristic block
+        convs = [
+           layer.name for layer in model.layers if "Conv2D" in layer.__class__.__name__
+        ]
 
-    blocks = [[]]
-    current_id = 0
-    for i, (g, idx) in enumerate(ordered_groups):
+        blocks = [[]]
+        current_id = 0
+        for i, (g, idx) in enumerate(ordered_groups):
 
-        #des = parser.first_common_descendant(list(g), joints)
-        des = parser.first_common_descendant(list(g), convs)
-        blocks[current_id].append((g, des))
-        if len(blocks[current_id]) >= len(ordered_groups) // num_blocks and current_id != num_blocks-1:
-            current_id += 1
-            blocks.append([])
+            trank = torder[heuristic_positions[current_id]]
+            is_previous = False
+            for layer in g:
+                _trank = torder[layer]
+                if _trank < trank:
+                    is_previous = True
+                    break
+     
+            if is_previous:
+                blocks[current_id].append((g, heuristic_positions[current_id]))
+            else:
+                current_id += 1
+                blocks.append([])
+                blocks[current_id].append((g, heuristic_positions[current_id]))
+
+        print(blocks)
+        return heuristic_positions        
+
+    else:
+        convs = [
+            layer.name for layer in model.layers if "Conv2D" in layer.__class__.__name__
+        ]
+
+        blocks = [[]]
+        current_id = 0
+        for i, (g, idx) in enumerate(ordered_groups):
+
+            #des = parser.first_common_descendant(list(g), joints)
+            des = parser.first_common_descendant(list(g), convs)
+            blocks[current_id].append((g, des))
+            if len(blocks[current_id]) >= len(ordered_groups) // num_blocks and current_id != num_blocks-1:
+                current_id += 1
+                blocks.append([])
 
     # compute positions
     convs = [
@@ -770,12 +804,6 @@ def make_group_fisher(model,
             t.name: 1.0
             for t in targets
         }
-
-    # ready for collecting
-    for layer in gmodel.layers:
-        if layer.__class__ == SimplePruningGate:
-            layer.grad_holder = []
-            layer.collecting = False
 
     def callback_after_deletion_(num_removed):
         if num_removed % save_steps == 0:

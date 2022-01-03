@@ -55,7 +55,7 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
             gate = gated_model.get_layer(l2g[g_])
             gates_weights[l2g[g_]] = gate.gates.numpy()
     score = [0.0 for _ in range(n_channels)]
-  
+
     local_base = 0
     for gidx, (g, _) in enumerate(tqdm(groups, ncols=80)):
         gate = gated_model.get_layer(l2g[g[0]]).gates.numpy()
@@ -87,6 +87,7 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
     ]
 
     total_ = math.ceil(n_channels * target_ratio)
+    print(total_)
     with tqdm(total=total_, ncols=80) as pbar:
         while float(n_removed) / n_channels < target_ratio:
             if save_steps != -1 and n_removed % save_steps == 0:

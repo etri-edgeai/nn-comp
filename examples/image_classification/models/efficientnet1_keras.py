@@ -73,8 +73,23 @@ def get_callbacks(nsteps=0):
 def get_custom_objects():
     return None
 
+def fix_mean_variance():
+    return tf.convert_to_tensor([[[[0.485, 0.456, 0.406]]]]), tf.convert_to_tensor([[[[0.229, 0.224, 0.225]]]])
+
 def get_train_epochs(finetune=False):
     if finetune:
         return 50
     else:
         return 100
+
+def get_heuristic_positions():
+
+    return [
+        "block1b_add",
+        "block2c_add",
+        "block3c_add",
+        "block4d_add",
+        "block5d_add",
+        "block6e_add",
+        "top_activation"
+    ]

@@ -46,7 +46,7 @@ def get_model(dataset, n_classes=100):
         model.add(efnb0)
         model.add(GlobalAveragePooling2D())
         if dataset == "cifar100":
-            model.add(Dropout(0.75))
+            model.add(Dropout(0.5))
         else:
             model.add(Dropout(0.25))
         model.add(Dense(n_classes, activation='softmax'))
@@ -72,6 +72,9 @@ def get_callbacks(nsteps=0):
 
 def get_custom_objects():
     return None
+
+def fix_mean_variance():
+    return tf.convert_to_tensor([[[[0.485, 0.456, 0.406]]]]), tf.convert_to_tensor([[[[0.229, 0.224, 0.225]]]])
 
 def get_train_epochs(finetune=False):
     if finetune:
