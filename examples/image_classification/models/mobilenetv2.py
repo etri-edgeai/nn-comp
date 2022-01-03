@@ -60,3 +60,25 @@ def get_custom_objects():
 
 def get_train_epochs():
     return 100
+
+def get_heuristic_positions():
+
+    return [
+        "block_1_project_BN",
+        "block_2_add",
+        "block_3_project_BN",
+        "block_4_add",
+        "block_5_add",
+        "block_6_project_BN",
+        "block_7_add",
+        "block_8_add",
+        "block_9_add",
+        "block_10_project_BN",
+        "block_11_add",
+        "block_12_add",
+        "block_13_project_BN",
+        "block_14_add",
+        "block_15_add",
+        "block_16_project_BN",
+        "out_relu"
+    ]
