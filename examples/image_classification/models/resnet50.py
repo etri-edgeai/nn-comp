@@ -62,3 +62,24 @@ def get_callbacks(nstep):
 
 def get_custom_objects():
     return None
+
+def get_heuristic_positions():
+
+    return [
+        "conv2_block1_out",
+        "conv2_block2_out",
+        "conv2_block3_out",
+        "conv3_block1_out",
+        "conv3_block2_out",
+        "conv3_block3_out",
+        "conv3_block4_out",
+        "conv4_block1_out",
+        "conv4_block2_out",
+        "conv4_block3_out",
+        "conv4_block4_out",
+        "conv4_block5_out",
+        "conv4_block6_out",
+        "conv5_block1_out",
+        "conv5_block2_out",
+        "conv5_block3_out
+    ]
