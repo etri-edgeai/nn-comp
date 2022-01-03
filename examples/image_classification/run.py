@@ -38,6 +38,36 @@ def get_total_channels(groups, model):
         total += layer.filters
     return total
 
+def model_path_based_load(dataset, model_path, model_handler):
+    custom_object_scope = {
+        "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer
+    }
+    if model_handler.get_custom_objects() is not None:
+        for key, val in model_handler.get_custom_objects().items():
+            custom_object_scope[key] = val
+
+    if dataset == "imagenet2012" and model_path is None:
+        model = model_handler.get_model(dataset="imagenet2012")
+    else:
+        if hasattr(model_handler, "get_custom_objects"):
+            model = tf.keras.models.load_model(model_path, custom_objects=custom_object_scope)
+        else:
+            model = tf.keras.models.load_model(model_path)
+
+    if "efnet" in model_handler.get_name() and dataset != "imagenet2012":
+        mean, var = model_handler.fix_mean_variance()
+
+        if model.layers[0].__class__.__name__ == "InputLayer":
+            assert hasattr(model.layers[2], "mean")
+            model.layers[2].mean = mean
+            model.layers[2].variance = var
+        else:
+            model.layers[0].get_layer("normalization").mean = mean
+            model.layers[0].get_layer("normalization").variance = var
+
+    return model
+
+
 def prune(
     dataset,
     model,
@@ -59,7 +89,8 @@ def prune(
     n_classes=100,
     num_blocks=3,
     save_dir="",
-    save_steps=-1):
+    save_steps=-1,
+    model_path2=None):
 
     if type(position_mode) != int:
         pos_str = "custom"
@@ -74,6 +105,10 @@ def prune(
         postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_hrank_"+str(target_ratio)
     elif method == "gf":
         postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_gf"+"_"+str(num_blocks)+"_"+str(target_ratio)+"_"+str(num_remove)
+    elif method == "t-finetune":
+        assert model_path2 is not None
+        postfix = os.path.splitext(os.path.basename(model_path2))[0]
+        postfix = "_".join(postfix.split("_")[1:])+"_finetuned" # remove name
     else:
         raise NotImplementedError("Method name error!")
 
@@ -120,8 +155,21 @@ def prune(
             save_dir=save_dir+"/pruning_steps",
             logging=False)
 
+    elif method == "t-finetune":
+        assert model_path2 is not None
+        gmodel_ = model_path_based_load(dataset, model_path2, model_handler)
+        gmodel, copied_model, l2g, ordered_groups, torder, parser, _ = add_gates(model, custom_objects=model_handler.get_custom_objects())
+
+        # gmodel_ should be identical to gmodel
+        for layer in gmodel_.layers:
+            glayer = gmodel.get_layer(layer.name)
+            glayer.set_weights(layer.get_weights())
+
+    else:
+        raise NotImplementedError("unknown method")
+
     def callback_before_update(idx, global_step, X, model_, teacher_logits, y, pbar):
-        if method in ["curl", "hrank"]:
+        if method in ["curl", "hrank", "t-finetune"]:
             return
 
         if distillation:
@@ -142,16 +190,19 @@ def prune(
 
     def stopping_callback(idx, global_step):
         if min_steps != -1:
-            if global_step >= min_steps and (method in ["curl", "hrank"] or not pc.continue_pruning):
+            if global_step >= min_steps and (method in ["curl", "hrank", "t-finetune"] or not pc.continue_pruning):
                 return True
             else:
                 return False
         else:
-            return not pc.continue_pruning
+            if method not in ["curl", "hrank", "t-finetune"]:
+                return not pc.continue_pruning
+            else:
+                return False
 
     if type(position_mode) == int:
         positions = compute_positions(
-            copied_model, ordered_groups, torder, parser, position_mode, num_blocks)
+            copied_model, ordered_groups, torder, parser, position_mode, num_blocks, model_handler.get_heuristic_positions())
     else:
         positions = position_mode
 
@@ -217,17 +268,23 @@ def prune(
     total_channels = get_total_channels(ordered_groups, gmodel)
     num_target_channels = math.ceil(total_channels * target_ratio)
     print(total_channels, num_target_channels)
-    if print_by_pruning:
-        max_iters = num_target_channels
-    else:
-        if enable_distortion_detect:
-            max_iters = num_target_channels * period
+    if method == "gf":
+        if print_by_pruning:
+            max_iters = num_target_channels
         else:
-            max_iters = (num_target_channels // num_remove + int(num_target_channels % num_remove > 0)) * period
+            if enable_distortion_detect:
+                max_iters = num_target_channels * period
+            else:
+                max_iters = (num_target_channels // num_remove + int(num_target_channels % num_remove > 0)) * period
+        print(max_iters, min_steps)
+        if min_steps > max_iters:
+            max_iters = min_steps
+    else:
+        if min_steps == -1:
+            return
+        else:
+            max_iters = min_steps
 
-    print(max_iters, min_steps)
-    if min_steps > max_iters:
-        max_iters = min_steps
     print("FINAL max_iters:", max_iters)
     iteration_based_train(
         dataset,
@@ -259,6 +316,7 @@ def run():
     parser.add_argument('--config', type=str, default=None)
     parser.add_argument('--dataset', type=str, default=None, help='model')
     parser.add_argument('--model_path', type=str, default=None, help='model')
+    parser.add_argument('--model_path2', type=str, default=None, help='model')
     parser.add_argument('--model_name', type=str, default=None, help='model')
     parser.add_argument('--model_prefix', type=str, default="", help='model')
     parser.add_argument('--mode', type=str, default="test", help='model')
@@ -335,15 +393,10 @@ def run():
     dataset = args.dataset
     if args.mode == "test":
 
-        if args.dataset == "imagenet2012" and args.model_path is None:
-            model = model_handler.get_model(dataset="imagenet2012")
-        else:
-            if hasattr(model_handler, "get_custom_objects"):
-                model = tf.keras.models.load_model(args.model_path, custom_objects=model_handler.get_custom_objects())
-            else:
-                model = tf.keras.models.load_model(args.model_path)
-
-        model_handler.compile(model)
+        model = model_path_based_load(args.dataset, args.model_path, model_handler)
+        print(model.summary())
+        tf.keras.utils.plot_model(model, "tested_model.pdf", expand_nested=True)
+        model_handler.compile(model, run_eagerly=True)
         _, _, test_data_gen = load_data(dataset, model_handler, n_classes=n_classes)
         print(model.evaluate(test_data_gen, verbose=1)[1])
     elif args.mode == "train": # train
@@ -355,10 +408,7 @@ def run():
         if not os.path.exists(save_dir):
             os.mkdir(save_dir)
 
-        if hasattr(model_handler, "get_custom_objects"):
-            model = tf.keras.models.load_model(args.model_path, custom_objects=model_handler.get_custom_objects())
-        else:
-            model = tf.keras.models.load_model(args.model_path)
+        model = model_path_based_load(args.dataset, args.model_path, model_handler)
         train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir)
     elif args.mode == "prune":
 
@@ -372,10 +422,7 @@ def run():
         else:
             model_path = args.model_path
 
-        if "imagenet" not in args.dataset:
-            model = tf.keras.models.load_model(model_path, custom_objects=model_handler.get_custom_objects())
-        else:
-            model = model_handler.get_model(dataset, n_classes=n_classes)
+        model = model_path_based_load(args.dataset, model_path, model_handler)
 
         prune(
             dataset,
@@ -398,7 +445,8 @@ def run():
             num_blocks=args.num_blocks,
             save_dir=save_dir,
             min_steps=args.min_steps,
-            save_steps=args.save_steps)
+            save_steps=args.save_steps,
+            model_path2=args.model_path2)
 
 
 if __name__ == "__main__":
