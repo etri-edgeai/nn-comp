@@ -45,6 +45,12 @@ def get_model(dataset, n_classes=100):
 def get_train_epochs():
     return 100
 
+def get_optimizer(mode=0):
+    if mode == 0:
+        return Adam(lr=0.0001)
+    elif mode == 1:
+        return Adam(lr=0.00001)
+
 def compile(model, run_eagerly=True):
     optimizer = Adam(lr=0.0001)
     model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['accuracy'], run_eagerly=run_eagerly)
