@@ -90,7 +90,8 @@ def prune(
     num_blocks=3,
     save_dir="",
     save_steps=-1,
-    model_path2=None):
+    model_path2=None,
+    backup_args=None):
 
     if type(position_mode) != int:
         pos_str = "custom"
@@ -111,6 +112,11 @@ def prune(
         postfix = "_".join(postfix.split("_")[1:])+"_finetuned" # remove name
     else:
         raise NotImplementedError("Method name error!")
+
+    if backup_args is not None:
+        import json
+        with open(model_handler.get_name()+"_"+postfix+".log", "w") as file_:
+            json.dump(backup_args, file_)
 
     _, _, test_data_gen = load_data(dataset, model_handler, batch_size=model_handler.batch_size, n_classes=n_classes)
     def validate(model_):
@@ -446,7 +452,8 @@ def run():
             save_dir=save_dir,
             min_steps=args.min_steps,
             save_steps=args.save_steps,
-            model_path2=args.model_path2)
+            model_path2=args.model_path2,
+            backup_args=vars(args))
 
 
 if __name__ == "__main__":
