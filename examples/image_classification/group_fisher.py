@@ -335,6 +335,25 @@ def compute_positions(model, ordered_groups, torder, parser, position_mode, num_
                 if act not in positions:
                     positions.append(act) # maybe the last transforming layer.
 
+    elif position_mode == 99: # k-path cover
+
+        # get graph
+        graph = parser._graph
+        from overlayflow.cover import i_kpathcover
+        positions_ = list(i_kpathcover(graph, k=7, directed=False))
+
+        positions = set()
+        for p in positions_:
+            try:
+                a = parser.get_first_activation(p)
+                positions.add(a)
+            except Exception as e:
+                pass
+        positions = list(positions)
+
+
+    print(positions)
+
     return positions
 
 
@@ -439,6 +458,9 @@ class PruningCallback(keras.callbacks.Callback):
         self.continue_pruning = True
         self.gate_groups = gate_groups
         self.inv_groups = inv_groups
+
+        self.cnt_after_fail = 0
+        self.alpha = 0.1
 
         self._iter = 0
         self._num_removed = 0
@@ -659,6 +681,7 @@ class PruningCallback(keras.callbacks.Callback):
                         for subnet_idx in indices:
                             sum_diff = 0
                             data_holder = self.data_holder[subnet_idx]
+                            mean_val = 0
                             for bidx  in range(len(data_holder)):
                                 data = data_holder[bidx]
                                 ins, outs = data
@@ -673,25 +696,31 @@ class PruningCallback(keras.callbacks.Callback):
                                     #right = tf.reshape(outs[0], (outs[0].shape[0], -1))
                                     left = output
                                     right = outs[0]
+                                    mean_val += np.mean(abs(right))
                                     sum_diff += tf.math.reduce_mean(tf.keras.losses.mean_squared_error(left, right))
                                     #sum_diff += tf.abs(tf.norm(left) - tf.norm(right)) / tf.norm(left)
                                 else:
                                     sum_diff_ = 0
+                                    mean_val_ = 0
                                     for left, right in zip(output, outs):
                                         sum_diff_ += tf.math.reduce_mean(tf.keras.losses.mean_squared_error(left, right))
                                         #sum_diff += tf.abs(tf.norm(left) - tf.norm(right)) / tf.norm(left)
+                                        mean_val_ += np.mean(abs(right))
                                     sum_diff += sum_diff_ / len(output)
+                                    mean_val += mean_val_ / len(output)
 
                             sum_diff /= len(data_holder)
-                            total_diff += sum_diff
+                            mean_val /= len(data_holder)
+                            #print(pow(0.1 * mean_val, 2), sum_diff)
+                            if sum_diff > pow(self.alpha * mean_val, 2):
+                                exit = True
+                                break
 
-                        if total_diff > 1.0:
-                            exit = True
-                        else:
+                        if not exit:
                             indices.clear()
                             filtered.clear()
 
-                if exit: # restore the last removed channel
+                if exit: # restore the last removed channel                    
                     for min_idx_ in filtered:
                         min_group = groups[min_idx_[0]]
                         for min_layer in min_group:
@@ -701,6 +730,15 @@ class PruningCallback(keras.callbacks.Callback):
 
                         self._num_removed -= 1
                         num_removed_channels -= 1
+
+                    if num_removed_channels <= 1:
+                        self.cnt_after_fail += 1
+                        if self.cnt_after_fail == 1:
+                            self.cnt_after_fail = 0
+                            self.alpha += 0.05
+                    else:
+                        self.cnt_after_fail = 0
+
                     break
 
                 # score update
