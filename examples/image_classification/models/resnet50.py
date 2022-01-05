@@ -81,5 +81,5 @@ def get_heuristic_positions():
         "conv4_block6_out",
         "conv5_block1_out",
         "conv5_block2_out",
-        "conv5_block3_out
+        "conv5_block3_out"
     ]
