@@ -9,7 +9,6 @@ from nncompress.algorithms.solver.solver import Solver
 INIT_TEMP = 1000000
 DELAY = 1
 def temperature(iter_, max_niters, curr_temp=-1, init_temp=INIT_TEMP, delta_temp=1000, use_delay=True):
-    global INT_COUNTER
     if curr_temp != -1 and use_delay:
         iter_ = iter_ // DELAY
     return init_temp - iter_ * delta_temp * (init_temp / (max_niters * delta_temp))
