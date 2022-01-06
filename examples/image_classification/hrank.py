@@ -24,7 +24,7 @@ def find_min(group_score, removed):
                 break
     return min_gidx, min_channel_idx
 
-def apply_hrank(train_data_generator, teacher, gated_model, groups, l2g, parser, target_ratio, save_dir, save_prefix, save_steps):
+def apply_hrank(train_data_generator, teacher, gated_model, groups, l2g, parser, target_ratio):
 
     convs = [
         layer for layer in teacher.layers if layer.__class__.__name__ == "Conv2D"

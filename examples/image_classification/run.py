@@ -13,6 +13,7 @@ import os
 import argparse
 import cv2
 import math
+import time
 
 import numpy as np
 from tensorflow import keras
@@ -91,10 +92,17 @@ def prune(
     save_dir="",
     save_steps=-1,
     model_path2=None,
-    backup_args=None):
+    backup_args=None,
+    ret_score=False):
+
+    start_time = time.time()
 
     if type(position_mode) != int:
         pos_str = "custom"
+    if type(position_mode) == list:
+        pos_str = "search"
+    elif type(position_mode) == str and os.path.splitext(position_mode)[1] == ".json":
+        pos_str = "from_file"
     else:
         pos_str = str(position_mode)
 
@@ -141,7 +149,7 @@ def prune(
         model_handler.batch_size = 256
         train_data_generator_, _, _ = load_data(dataset, model_handler, training_augment=False, n_classes=n_classes)
         model_handler.batch_size = backup
-        apply_hrank(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio, save_dir+"/pruning_steps", model_handler.get_name()+postfix, save_steps=save_steps)
+        apply_hrank(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio)
 
     elif method == "gf":
         gmodel, copied_model, parser, ordered_groups, torder, pc = make_group_fisher(
@@ -209,14 +217,20 @@ def prune(
     if type(position_mode) == int:
         positions = compute_positions(
             copied_model, ordered_groups, torder, parser, position_mode, num_blocks, model_handler.get_heuristic_positions())
+    elif type(position_mode) == str:
+        import json
+        with open(position_mode, "r") as f:
+            positions = json.load(f)["data"]
     else:
         positions = position_mode
 
-    profile = model_profiler.model_profiler(copied_model, 1)
-    print(profile)
-    cmodel = parser.cut(gmodel)
-    print(cmodel.count_params())
-    #print(validate(cmodel))
+    print(positions)
+    if not ret_score:
+        profile = model_profiler.model_profiler(copied_model, 1)
+        print(profile)
+        cmodel = parser.cut(gmodel)
+        print(cmodel.count_params())
+        #print(validate(cmodel))
 
     if distillation:
         custom_object_scope = {
@@ -273,7 +287,8 @@ def prune(
  
     total_channels = get_total_channels(ordered_groups, gmodel)
     num_target_channels = math.ceil(total_channels * target_ratio)
-    print(total_channels, num_target_channels)
+    if not ret_score:
+        print(total_channels, num_target_channels)
     if method == "gf":
         if print_by_pruning:
             max_iters = num_target_channels
@@ -282,7 +297,8 @@ def prune(
                 max_iters = num_target_channels * period
             else:
                 max_iters = (num_target_channels // num_remove + int(num_target_channels % num_remove > 0)) * period
-        print(max_iters, min_steps)
+        if not ret_score:
+            print(max_iters, min_steps)
         if min_steps > max_iters:
             max_iters = min_steps
     else:
@@ -291,7 +307,8 @@ def prune(
         else:
             max_iters = min_steps
 
-    print("FINAL max_iters:", max_iters)
+    if not ret_score:
+        print("FINAL max_iters:", max_iters)
     iteration_based_train(
         dataset,
         gg,
@@ -305,16 +322,26 @@ def prune(
         augment=True,
         n_classes=n_classes)
 
+    end_time = time.time()
+    
     cmodel = parser.cut(gmodel)
     print(cmodel.count_params())
-    print(validate(cmodel))
-    profile = model_profiler.model_profiler(cmodel, 1)
-    print(profile)
-    tf.keras.models.save_model(cmodel, save_dir+"/"+model_handler.get_name()+postfix+".h5")
+    val_score = validate(cmodel)
+    if not ret_score:
+        print("elapsed_time:", end_time - start_time)
+        print(val_score)
+        profile = model_profiler.model_profiler(cmodel, 1)
+        print(profile)
+        tf.keras.models.save_model(cmodel, save_dir+"/"+model_handler.get_name()+postfix+".h5")
+        from keras_flops import get_flops
+        flops = get_flops(model, batch_size=1)
+        print(f"FLOPS: {flops / 10 ** 9:.06} G")
 
-    if finetune:
-        train(dataset, cmodel, model_handler.get_name()+args.model_prefix+"_finetuned"+postfix, model_handler, run_eagerly=True, save_dir=save_dir)
-    return cmodel
+        if finetune:
+            train(dataset, cmodel, model_handler.get_name()+args.model_prefix+"_finetuned"+postfix, model_handler, run_eagerly=True, save_dir=save_dir)
+        return cmodel
+    else:
+        return val_score
 
 
 def run():
@@ -326,7 +353,7 @@ def run():
     parser.add_argument('--model_name', type=str, default=None, help='model')
     parser.add_argument('--model_prefix', type=str, default="", help='model')
     parser.add_argument('--mode', type=str, default="test", help='model')
-    parser.add_argument('--position_mode', type=int, help='model')
+    parser.add_argument('--position_mode', type=str, help='model')
     parser.add_argument('--with_label', action='store_true')
     parser.add_argument('--label_only', action='store_true')
     parser.add_argument('--distillation', action='store_true')
@@ -344,6 +371,9 @@ def run():
     parser.add_argument('--target_ratio', type=float, default=0.5, help='model')
     parser.add_argument('--save_steps', type=int, default=-1, help='model')
     args = parser.parse_args()
+
+    if args.position_mode.isdigit():
+        args.position_mode = int(args.position_mode)
 
     import json
     with open("args.log", "w") as file_:
@@ -455,6 +485,38 @@ def run():
             model_path2=args.model_path2,
             backup_args=vars(args))
 
+    elif args.mode == "find":
+
+        if args.model_path is None and args.dataset != "imagenet2012":
+            from pathset import paths
+            model_path = paths[args.dataset][args.model_name]
+        else:
+            model_path = args.model_path
+
+        model = model_path_based_load(args.dataset, model_path, model_handler)
+
+        from search_positions import find_positions
+        pos = find_positions(
+            prune,
+            dataset,
+            model,
+            model_handler,
+            position_mode=args.position_mode,
+            with_label=args.with_label,
+            label_only=args.label_only,
+            distillation=args.distillation,
+            num_remove=args.num_remove,
+            enable_distortion_detect=args.enable_distortion_detect,
+            target_ratio=args.target_ratio,
+            n_classes=n_classes,
+            period=args.period,
+            num_blocks=args.num_blocks,
+            min_steps=args.min_steps)
+
+        import json
+        pos_filename = model_handler.get_name()+"_"+dataset+"_"+str(with_label)+str(num_blocks)+"_"+str(target_ratio)+"_"+str(num_remove)+".json"
+        with open(pos_filename, "w") as f:
+            json.dump({"data":pos}, f)
 
 if __name__ == "__main__":
     run()
