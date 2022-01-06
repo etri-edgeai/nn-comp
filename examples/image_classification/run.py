@@ -334,7 +334,7 @@ def prune(
         print(profile)
         tf.keras.models.save_model(cmodel, save_dir+"/"+model_handler.get_name()+postfix+".h5")
         from keras_flops import get_flops
-        flops = get_flops(model, batch_size=1)
+        flops = get_flops(cmodel, batch_size=1)
         print(f"FLOPS: {flops / 10 ** 9:.06} G")
 
         if finetune:
