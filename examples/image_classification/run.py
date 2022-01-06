@@ -106,7 +106,7 @@ def prune(
     else:
         pos_str = str(position_mode)
 
-    if label_only:
+    if label_only and method == "gf":
         postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_gf_label_only_"+str(target_ratio)+"_"+str(num_remove)
     elif method == "curl":
         postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_curl_"+str(target_ratio)
