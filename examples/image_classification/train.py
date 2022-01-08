@@ -194,7 +194,7 @@ def train_step(X, model, teacher_logits=None, y=None, ret_last_tensor=False):
         return tape, loss
 
 
-def iteration_based_train(dataset, model, model_handler, max_iters, teacher=None, with_label=True, with_distillation=True, callback_before_update=None, stopping_callback=None, augment=True, n_classes=100):
+def iteration_based_train(dataset, model, model_handler, max_iters, teacher=None, with_label=True, with_distillation=True, callback_before_update=None, stopping_callback=None, augment=True, n_classes=100, validate_func=None):
 
     train_data_generator, valid_data_generator, test_data_generator = load_data(dataset, model_handler, training_augment=augment, n_classes=n_classes)
 
@@ -207,6 +207,7 @@ def iteration_based_train(dataset, model, model_handler, max_iters, teacher=None
     callbacks_ = model_handler.get_callbacks(iters)
     optimizer = model_handler.get_optimizer()
 
+    epoch = 0
     with tqdm(total=max_iters, ncols=120) as pbar:
         while global_step < max_iters: 
             # start with new epoch.
@@ -242,6 +243,9 @@ def iteration_based_train(dataset, model, model_handler, max_iters, teacher=None
                 else:
                     pbar.update(1)
 
+                if global_step % 2000 == 0 and validate_func is not None:
+                    print("Global Steps %d: %f" % (global_step, validate_func()))
+
                 if stopping_callback is not None and stopping_callback(idx, global_step):
                     done = True
                     break
@@ -249,3 +253,7 @@ def iteration_based_train(dataset, model, model_handler, max_iters, teacher=None
                 break
             else:
                 train_data_generator.on_epoch_end()
+
+            #epoch += 1
+            #if validate_func is not None:
+            #    print("Epoch %d: %f" % (epoch, validate_func()))

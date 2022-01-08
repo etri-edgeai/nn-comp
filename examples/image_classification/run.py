@@ -93,7 +93,8 @@ def prune(
     save_steps=-1,
     model_path2=None,
     backup_args=None,
-    ret_score=False):
+    ret_score=False,
+    inter_eval=False):
 
     start_time = time.time()
 
@@ -309,6 +310,16 @@ def prune(
 
     if not ret_score:
         print("FINAL max_iters:", max_iters)
+
+    def validate_func(gmodel_, parser_):
+        cmodel_ = parser.cut(gmodel_)
+        val_score = validate(cmodel_)
+        return val_score
+
+    vfunc = None
+    if inter_eval:
+        vfunc = lambda : validate_func(gmodel, parser)
+
     iteration_based_train(
         dataset,
         gg,
@@ -320,7 +331,8 @@ def prune(
         callback_before_update=callback_before_update,
         stopping_callback=stopping_callback,
         augment=True,
-        n_classes=n_classes)
+        n_classes=n_classes,
+        validate_func=vfunc)
 
     end_time = time.time()
     
@@ -365,6 +377,7 @@ def run():
     parser.add_argument('--enable_distortion_detect', action='store_true')
     parser.add_argument('--norm_update', action='store_true')
     parser.add_argument('--print_by_pruning', action='store_true')
+    parser.add_argument('--inter_eval', action='store_true')
     parser.add_argument('--num_blocks', type=int, default=5, help='model')
     parser.add_argument('--period', type=int, default=25, help='model')
     parser.add_argument('--min_steps', type=int, default=-1, help='model')
@@ -483,7 +496,8 @@ def run():
             min_steps=args.min_steps,
             save_steps=args.save_steps,
             model_path2=args.model_path2,
-            backup_args=vars(args))
+            backup_args=vars(args),
+            inter_eval=args.inter_eval)
 
     elif args.mode == "find":
 

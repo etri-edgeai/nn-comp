@@ -159,7 +159,6 @@ def compute_positions(model, ordered_groups, torder, parser, position_mode, num_
                 blocks.append([])
                 blocks[current_id].append((g, heuristic_positions[current_id]))
 
-        print(blocks)
         return heuristic_positions        
 
     else:
@@ -351,9 +350,6 @@ def compute_positions(model, ordered_groups, torder, parser, position_mode, num_
             except Exception as e:
                 pass
         positions = list(positions)
-
-
-    print(positions)
 
     return positions
 
