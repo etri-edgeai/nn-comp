@@ -14,12 +14,73 @@ class PositionState(State):
         self._torder = torder
         self._score = None
         self._inv_torder = {}
+        self._layers = [
+            key for key in self._torder
+        ]
 
         for key, item in self._torder.items():
             self._inv_torder[item] = key
 
     def get_next_impl(self):
+       
+        """
+        if (np.random.rand() < 0.3 and len(self._layers) > len(self._pos)) or len(self._pos) < 2:
+
+            rand_idx = int(np.random.rand() * len(self._layers))
+            while self._layers[rand_idx] in self._pos or rand_idx == 0:
+                rand_idx = int(np.random.rand() * len(self._layers))
+
+            target = self._layers[rand_idx]
+            target_idx = -1
+            for idx, pos in enumerate(self._pos):
+                if self._torder[pos] > self._torder[target]:
+                    target_idx = idx
+                    break
+
+            new_pos = copy.deepcopy(self._pos)
+            new_pos.insert(target_idx, target)
+
+        elif np.random.rand() < 0.6 and len(self._pos) > 1:
+            
+            rand_idx = int(np.random.rand() * len(self._pos))
+            new_pos = copy.deepcopy(self._pos)
+            new_pos.remove(new_pos[rand_idx])
+
+        else:
+
+            while True:
+
+                rand_idx = int(np.random.rand() * len(self._pos))
+                target = self._pos[rand_idx]
+
+                if rand_idx > 0:
+                    prev = self._pos[rand_idx-1]
+                    prev_trank = self._torder[prev]
+                else:
+                    prev = None
+                    prev_trank = -1
+
+                if rand_idx < len(self._pos) - 1:
+                    next_ = self._pos[rand_idx+1]
+                    next_trank = self._torder[next_]
+                else:
+                    next_ = None
+                    next_trank = len(self._pos)
+
+                range_ = list(range(prev_trank+1, next_trank))
+                if len(range_) > 0:
+                    break
+
+            rand_pidx = int(np.random.rand() * len(range_))
+            new_trank = range_[rand_pidx]
+            new_layer = self._inv_torder[new_trank]
+            
+            new_pos = copy.deepcopy(self._pos)
+            new_pos[rand_idx] = new_layer
+        """
+
         while True:
+
             rand_idx = int(np.random.rand() * len(self._pos))
             target = self._pos[rand_idx]
 
@@ -40,6 +101,7 @@ class PositionState(State):
             range_ = list(range(prev_trank+1, next_trank))
             if len(range_) > 0:
                 break
+
         rand_pidx = int(np.random.rand() * len(range_))
         new_trank = range_[rand_pidx]
         new_layer = self._inv_torder[new_trank]
@@ -47,6 +109,9 @@ class PositionState(State):
         new_pos = copy.deepcopy(self._pos)
         new_pos[rand_idx] = new_layer
 
+        print([
+            (pos, self._torder[pos]) for pos in new_pos
+        ])
         return PositionState(new_pos, self._torder)
 
     def __str__(self):
@@ -68,7 +133,13 @@ def find_positions(
     min_steps=-1,
     period=25,
     n_classes=100,
-    num_blocks=3):
+    num_blocks=-1):
+
+    if num_blocks == -1:
+        inc_blocks = True
+        num_blocks = 5
+    else:
+        inc_blocks = False
 
     gmodel, copied_model, l2g, ordered_groups, torder, parser, _ = add_gates(model, custom_objects=model_handler.get_custom_objects())
     positions = compute_positions(
@@ -80,7 +151,7 @@ def find_positions(
         if state._score is not None:
             return state._score
             
-        return prune_func(
+        score = prune_func(
             dataset,
             model,
             model_handler,
@@ -94,8 +165,10 @@ def find_positions(
             min_steps=min_steps,
             period=period,
             n_classes=n_classes,
-            num_blocks=num_blocks,
+            num_blocks=len(state._pos),
             ret_score=True)
+        state._score = score
+        return score
 
     solver = SimulatedAnnealingSolver(score, 100)
     state = solver.solve(init_state)
