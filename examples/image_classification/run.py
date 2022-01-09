@@ -94,7 +94,7 @@ def prune(
     model_path2=None,
     backup_args=None,
     ret_score=False,
-    eval_steps=-1:
+    eval_steps=-1):
 
     start_time = time.time()
 
