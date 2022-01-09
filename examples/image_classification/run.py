@@ -527,7 +527,7 @@ def run():
             min_steps=args.min_steps)
 
         import json
-        pos_filename = model_handler.get_name()+"_"+dataset+"_"+str(with_label)+str(num_blocks)+"_"+str(target_ratio)+"_"+str(num_remove)+".json"
+        pos_filename = model_handler.get_name()+"_"+dataset+"_"+str(args.with_label)+str(args.num_blocks)+"_"+str(args.target_ratio)+"_"+str(args.num_remove)+".json"
         with open(pos_filename, "w") as f:
             json.dump({"data":pos}, f)
 
