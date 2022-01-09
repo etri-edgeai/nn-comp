@@ -194,7 +194,7 @@ def train_step(X, model, teacher_logits=None, y=None, ret_last_tensor=False):
         return tape, loss
 
 
-def iteration_based_train(dataset, model, model_handler, max_iters, teacher=None, with_label=True, with_distillation=True, callback_before_update=None, stopping_callback=None, augment=True, n_classes=100, validate_func=None):
+def iteration_based_train(dataset, model, model_handler, max_iters, teacher=None, with_label=True, with_distillation=True, callback_before_update=None, stopping_callback=None, augment=True, n_classes=100, eval_steps=-1, validate_func=None):
 
     train_data_generator, valid_data_generator, test_data_generator = load_data(dataset, model_handler, training_augment=augment, n_classes=n_classes)
 
@@ -237,13 +237,12 @@ def iteration_based_train(dataset, model, model_handler, max_iters, teacher=None
                 optimizer.apply_gradients(zip(gradients, model.trainable_variables))
 
                 global_step += 1
-                if ret is not None:
-                    if ret != 0:
-                        pbar.update(ret)
+                if ret is not None and ret != 0:
+                    pbar.update(ret)
                 else:
                     pbar.update(1)
 
-                if global_step % 2000 == 0 and validate_func is not None:
+                if eval_steps != -1 and global_step % eval_steps == 0 and validate_func is not None:
                     print("Global Steps %d: %f" % (global_step, validate_func()))
 
                 if stopping_callback is not None and stopping_callback(idx, global_step):
