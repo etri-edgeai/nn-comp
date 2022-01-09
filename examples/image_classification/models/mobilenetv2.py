@@ -29,19 +29,25 @@ def preprocess_func(img, shape):
     return img
 
 def get_model(dataset, n_classes=100):
-    model_ = tf.keras.applications.mobilenet_v2.MobileNetV2(
-         alpha=1.0, include_top=False, weights='imagenet',
-            classes=n_classes
-                )
-    model = Sequential()
-    model.add(model_)
-    model.add(GlobalAveragePooling2D())
-    if dataset == "cifar100":
-        model.add(Dropout(0.5))
+    if dataset == "imagenet2012":
+        model = tf.keras.applications.mobilenet_v2.MobileNetV2(
+            include_top=True, weights='imagenet', input_tensor=None, input_shape=input_shape, pooling=None, classes=1000,
+            classifier_activation='softmax')
+        return model
     else:
-        model.add(Dropout(0.25))
-    model.add(Dense(n_classes, activation='softmax'))
-    return model
+        model_ = tf.keras.applications.mobilenet_v2.MobileNetV2(
+             alpha=1.0, include_top=False, weights='imagenet',
+                classes=n_classes
+                    )
+        model = Sequential()
+        model.add(model_)
+        model.add(GlobalAveragePooling2D())
+        if dataset == "cifar100":
+            model.add(Dropout(0.5))
+        else:
+            model.add(Dropout(0.25))
+        model.add(Dense(n_classes, activation='softmax'))
+        return model
 
 def get_optimizer(mode=0):
     if mode == 0:
