@@ -27,6 +27,7 @@ from nncompress import backend as M
 
 from curl import apply_curl
 from hrank import apply_hrank
+from l2 import apply_l2prune
 from group_fisher import make_group_fisher, add_gates, prune_step, compute_positions, get_num_all_channels
 from loader import get_model_handler
 
@@ -113,6 +114,8 @@ def prune(
         postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_curl_"+str(target_ratio)
     elif method == "hrank":
         postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_hrank_"+str(target_ratio)
+    elif method == "l2":
+        postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_l2_"+str(target_ratio)
     elif method == "gf":
         postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_gf"+"_"+str(num_blocks)+"_"+str(target_ratio)+"_"+str(num_remove)
     elif method == "t-finetune":
@@ -150,7 +153,18 @@ def prune(
         model_handler.batch_size = 256
         train_data_generator_, _, _ = load_data(dataset, model_handler, training_augment=False, n_classes=n_classes)
         model_handler.batch_size = backup
-        apply_hrank(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio)
+        gf_model= model_path_based_load(dataset, model_path2, model_handler)
+        apply_hrank(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio, gf_model)
+
+    elif method == "l2":
+
+        gmodel, copied_model, l2g, ordered_groups, torder, parser, _ = add_gates(model, custom_objects=model_handler.get_custom_objects())
+        backup = model_handler.batch_size
+        model_handler.batch_size = 256
+        train_data_generator_, _, _ = load_data(dataset, model_handler, training_augment=False, n_classes=n_classes)
+        model_handler.batch_size = backup
+        gf_model= model_path_based_load(dataset, model_path2, model_handler)
+        apply_l2prune(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio, gf_model)
 
     elif method == "gf":
         gmodel, copied_model, parser, ordered_groups, torder, pc = make_group_fisher(
@@ -184,7 +198,7 @@ def prune(
         raise NotImplementedError("unknown method")
 
     def callback_before_update(idx, global_step, X, model_, teacher_logits, y, pbar):
-        if method in ["curl", "hrank", "t-finetune"]:
+        if method in ["curl", "hrank", "t-finetune", "l2"]:
             return
 
         if distillation:
@@ -205,12 +219,12 @@ def prune(
 
     def stopping_callback(idx, global_step):
         if min_steps != -1:
-            if global_step >= min_steps and (method in ["curl", "hrank", "t-finetune"] or not pc.continue_pruning):
+            if global_step >= min_steps and (method in ["curl", "hrank", "t-finetune", "l2"] or not pc.continue_pruning):
                 return True
             else:
                 return False
         else:
-            if method not in ["curl", "hrank", "t-finetune"]:
+            if method not in ["curl", "hrank", "t-finetune", "l2"]:
                 return not pc.continue_pruning
             else:
                 return False
@@ -390,6 +404,7 @@ def run():
     import json
     with open("args.log", "w") as file_:
         json.dump(vars(args), file_)
+        print(vars(args))
 
     if args.config is not None:
         with open(args.config, 'r') as stream:
@@ -509,7 +524,7 @@ def run():
         model = model_path_based_load(args.dataset, model_path, model_handler)
 
         from search_positions import find_positions
-        pos = find_positions(
+        _pos, best_pos  = find_positions(
             prune,
             dataset,
             model,
@@ -529,7 +544,7 @@ def run():
         import json
         pos_filename = model_handler.get_name()+"_"+dataset+"_"+str(args.with_label)+str(args.num_blocks)+"_"+str(args.target_ratio)+"_"+str(args.num_remove)+".json"
         with open(pos_filename, "w") as f:
-            json.dump({"data":pos}, f)
+            json.dump({"data":best_pos}, f)
 
 if __name__ == "__main__":
     run()
