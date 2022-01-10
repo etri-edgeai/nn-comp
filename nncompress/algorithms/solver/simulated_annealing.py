@@ -25,9 +25,12 @@ class SimulatedAnnealingSolver(Solver):
         super(SimulatedAnnealingSolver, self).__init__(score_func)
         self.max_niters = max_niters
         self._temp_func = temperature
+        self._best = None
+        self._best_score = None
 
     def solve(self, initial_state, callbacks=None):
         state = initial_state
+        self._best = state
         T = -1
         for i in range(self.max_niters):
             T = self._temp_func(i, self.max_niters, T)
@@ -38,8 +41,15 @@ class SimulatedAnnealingSolver(Solver):
                 new_state = state.get_next()
                 new_score = self._score_func(new_state)
 
+            if self._best_score is None:
+                self._best_score = self._score_func(self._best)
+
+            if new_score > self._best_score:
+                self._best = new_state
+                self._best_score = new_score
+
             prob = transition_prob(new_score - score, T)
-            print("Score:%.4f   New score:%.4f  prob:%.4f" % (score, new_score, prob))
+            print("Score:%.4f   New score:%.4f Best score:%.4f  prob:%.4f" % (score, new_score, self._best_score, prob))
             transition = False
             if prob >= random.random():
                 state = new_state
@@ -48,4 +58,4 @@ class SimulatedAnnealingSolver(Solver):
             if callbacks is not None:
                 for c in callbacks:
                     c(state, i, transition)
-        return state
+        return state, self._best

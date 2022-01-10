@@ -1,55 +1,21 @@
 import math
 import tensorflow as tf
 import numpy as np
-import json
 
 from numba import jit
 from tqdm import tqdm
 
-def apply_hrank(train_data_generator, teacher, gated_model, groups, l2g, parser, target_ratio, gf_model):
+def apply_l2prune(train_data_generator, teacher, gated_model, groups, l2g, parser, target_ratio, gf_model):
 
+    score = {}
     convs = [
         layer for layer in teacher.layers if layer.__class__.__name__ == "Conv2D"
     ]
 
-    acts = {
-        layer.name:teacher.get_layer(parser.get_first_activation(layer.name)) for layer in convs
-    }
-    
-    num_splits = 1
-    offset = int(float(len(convs)) / num_splits)
-    rest = len(convs) % num_splits
-    score = {}
-    for i in range(num_splits):
-        data_holders = []
-        start_idx = offset * i
-        end_idx = offset * (i + 1)
-        if i == num_splits - 1:
-            end_idx += rest
-        print(start_idx, end_idx)
-
-        targets_ = convs[start_idx:end_idx]
-        model = tf.keras.Model(teacher.input, [acts[layer.name].output for layer in targets_])
-        for t in targets_:
-            score[t.name] = [ 0 for _ in range(t.filters) ]
-
-        record_id = 1
-        for X, y in train_data_generator:
-            if record_id > 1:
-                break
-            data_holders.append(model(X)) # the first output of teacher is the output logit.
-            record_id += 1
-
-        for bidx, batch_data in enumerate(data_holders):
-            for layer, feat_map in zip(targets_, batch_data):
-                for channel_idx in range(int(feat_map.shape[-1])):
-                    # compute rank.
-                    feat_mat = feat_map[:,:,:,channel_idx]
-                    score[layer.name][channel_idx] += tf.math.reduce_sum(
-                        tf.linalg.matrix_rank(
-                            feat_mat, tol=None
-                            )
-                    )
+    for t in convs:
+        w = np.abs(t.get_weights()[0])
+        sum_ = np.sum(w, axis=tuple([i for i in range(len(w.shape)-1)]))
+        score[t.name] = list(sum_)
 
     n_channels = 0
     gscore = [
@@ -94,7 +60,7 @@ def apply_hrank(train_data_generator, teacher, gated_model, groups, l2g, parser,
         while float(idx) / nchannels < sparsity:
             item = gscore[gidx][idx]
             cidx = item[0]
-            removed.add((gidx, cidx)) 
+            removed.add((gidx, cidx))
             idx += 1
 
     for (min_gidx, min_channel_idx) in removed:

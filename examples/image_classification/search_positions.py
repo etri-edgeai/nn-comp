@@ -22,8 +22,7 @@ class PositionState(State):
             self._inv_torder[item] = key
 
     def get_next_impl(self):
-       
-        """
+
         if (np.random.rand() < 0.3 and len(self._layers) > len(self._pos)) or len(self._pos) < 2:
 
             rand_idx = int(np.random.rand() * len(self._layers))
@@ -38,7 +37,10 @@ class PositionState(State):
                     break
 
             new_pos = copy.deepcopy(self._pos)
-            new_pos.insert(target_idx, target)
+            if target_idx == -1:
+                new_pos.append(target)
+            else:
+                new_pos.insert(target_idx, target)
 
         elif np.random.rand() < 0.6 and len(self._pos) > 1:
             
@@ -77,39 +79,8 @@ class PositionState(State):
             
             new_pos = copy.deepcopy(self._pos)
             new_pos[rand_idx] = new_layer
-        """
 
-        while True:
-
-            rand_idx = int(np.random.rand() * len(self._pos))
-            target = self._pos[rand_idx]
-
-            if rand_idx > 0:
-                prev = self._pos[rand_idx-1]
-                prev_trank = self._torder[prev]
-            else:
-                prev = None
-                prev_trank = -1
-
-            if rand_idx < len(self._pos) - 1:
-                next_ = self._pos[rand_idx+1]
-                next_trank = self._torder[next_]
-            else:
-                next_ = None
-                next_trank = len(self._pos)
-
-            range_ = list(range(prev_trank+1, next_trank))
-            if len(range_) > 0:
-                break
-
-        rand_pidx = int(np.random.rand() * len(range_))
-        new_trank = range_[rand_pidx]
-        new_layer = self._inv_torder[new_trank]
-        
-        new_pos = copy.deepcopy(self._pos)
-        new_pos[rand_idx] = new_layer
-
-        print([
+        print(rand_idx, [
             (pos, self._torder[pos]) for pos in new_pos
         ])
         return PositionState(new_pos, self._torder)
@@ -171,6 +142,6 @@ def find_positions(
         return score
 
     solver = SimulatedAnnealingSolver(score, 100)
-    state = solver.solve(init_state)
+    state, best = solver.solve(init_state)
 
-    return state._pos
+    return state._pos, best._pos
