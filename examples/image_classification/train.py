@@ -1,5 +1,6 @@
 import math
 import os
+import logging
 
 from tqdm import tqdm
 from tensorflow import keras
@@ -181,7 +182,10 @@ def train_step(X, model, teacher_logits=None, y=None, ret_last_tensor=False):
                 else:
                     loss += temp
 
-            loss += tf.math.reduce_mean(tf.keras.losses.kl_divergence(logits[0], teacher_logits[0])) # model's output logit
+            if loss is None: # empty position case
+                loss = tf.math.reduce_mean(tf.keras.losses.kl_divergence(logits[0], teacher_logits[0])) # model's output logit
+            else:
+                loss += tf.math.reduce_mean(tf.keras.losses.kl_divergence(logits[0], teacher_logits[0])) # model's output logit
             if y is not None:
                 loss += tf.math.reduce_mean(tf.keras.losses.categorical_crossentropy(logits[0], y))
         else:
@@ -243,7 +247,9 @@ def iteration_based_train(dataset, model, model_handler, max_iters, teacher=None
                     pbar.update(1)
 
                 if eval_steps != -1 and global_step % eval_steps == 0 and validate_func is not None:
-                    print("Global Steps %d: %f" % (global_step, validate_func()))
+                    val = validate_func()
+                    print("Global Steps %d: %f" % (global_step, val))
+                    logging.info("Global Steps %d: %f" % (global_step, val))
 
                 if stopping_callback is not None and stopping_callback(idx, global_step):
                     done = True

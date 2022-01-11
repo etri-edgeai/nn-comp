@@ -21,9 +21,12 @@ class PositionState(State):
         for key, item in self._torder.items():
             self._inv_torder[item] = key
 
+    def __str__(self):
+        return str(self._pos)
+
     def get_next_impl(self):
 
-        if (np.random.rand() < 0.3 and len(self._layers) > len(self._pos)) or len(self._pos) < 2:
+        if (np.random.rand() < float(1)/3 and len(self._layers) > len(self._pos)) or len(self._pos) == 1:
 
             rand_idx = int(np.random.rand() * len(self._layers))
             while self._layers[rand_idx] in self._pos or rand_idx == 0:
@@ -42,7 +45,7 @@ class PositionState(State):
             else:
                 new_pos.insert(target_idx, target)
 
-        elif np.random.rand() < 0.6 and len(self._pos) > 1:
+        elif np.random.rand() < float(2)/3 and len(self._pos) >= 1:
             
             rand_idx = int(np.random.rand() * len(self._pos))
             new_pos = copy.deepcopy(self._pos)

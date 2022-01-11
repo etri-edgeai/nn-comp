@@ -3,6 +3,7 @@ from __future__ import print_function
 
 import random
 import math
+import time
 
 from nncompress.algorithms.solver.solver import Solver
 
@@ -27,12 +28,15 @@ class SimulatedAnnealingSolver(Solver):
         self._temp_func = temperature
         self._best = None
         self._best_score = None
+        print(time.ctime(time.time()))
 
     def solve(self, initial_state, callbacks=None):
         state = initial_state
         self._best = state
         T = -1
         for i in range(self.max_niters):
+            if i > 0 and i % 10 == 0:
+                print("[%s] %d iterations, best score:%.4f, ouptut:%s" % (time.ctime(time.time()), i, self._best_score, str(self._best)))
             T = self._temp_func(i, self.max_niters, T)
             score = self._score_func(state)
             new_state = state.get_next()
