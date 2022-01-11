@@ -14,6 +14,7 @@ import argparse
 import cv2
 import math
 import time
+import logging
 
 import numpy as np
 from tensorflow import keras
@@ -182,7 +183,7 @@ def prune(
             save_steps=save_steps,
             save_prefix=model_handler.get_name()+postfix,
             save_dir=save_dir+"/pruning_steps",
-            logging=False)
+            logging_=False)
 
     elif method == "t-finetune":
         assert model_path2 is not None
@@ -239,12 +240,15 @@ def prune(
     else:
         positions = position_mode
 
+    logging.info(positions)
     print(positions)
     if not ret_score:
         profile = model_profiler.model_profiler(copied_model, 1)
         print(profile)
+        logging.info(profile)
         cmodel = parser.cut(gmodel)
         print(cmodel.count_params())
+        logging.info(cmodel.count_params())
         #print(validate(cmodel))
 
     if distillation:
@@ -354,13 +358,17 @@ def prune(
     val_score = validate(cmodel)
     if not ret_score:
         print("elapsed_time:", end_time - start_time)
+        logging.info("elapsed_time: "+str(end_time - start_time))
         print(val_score)
+        logging.info(val_score)
         profile = model_profiler.model_profiler(cmodel, 1)
         print(profile)
+        logging.info(profile)
         tf.keras.models.save_model(cmodel, save_dir+"/"+model_handler.get_name()+postfix+".h5")
         from keras_flops import get_flops
         flops = get_flops(cmodel, batch_size=1)
         print(f"FLOPS: {flops / 10 ** 9:.06} G")
+        logging.info(f"FLOPS: {flops / 10 ** 9:.06} G")
 
         if finetune:
             train(dataset, cmodel, model_handler.get_name()+args.model_prefix+"_finetuned"+postfix, model_handler, run_eagerly=True, save_dir=save_dir)
@@ -396,6 +404,7 @@ def run():
     parser.add_argument('--min_steps', type=int, default=-1, help='model')
     parser.add_argument('--target_ratio', type=float, default=0.5, help='model')
     parser.add_argument('--save_steps', type=int, default=-1, help='model')
+    parser.add_argument('--log_file', type=str, default=None, help="method")
     args = parser.parse_args()
 
     if args.position_mode.isdigit():
@@ -434,6 +443,10 @@ def run():
         raise ValueError("`save_models` is not empty!")
     elif not os.path.exists(save_dir):
         os.mkdir(save_dir)
+
+    if args.log_file is not None:
+        logging.basicConfig(filename=args.log_file, level=logging.INFO, format='%(asctime)s ] %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
+        logging.info(vars(args))
 
     model_handler = get_model_handler(args.model_name)
 
@@ -543,6 +556,7 @@ def run():
 
         import json
         pos_filename = model_handler.get_name()+"_"+dataset+"_"+str(args.with_label)+str(args.num_blocks)+"_"+str(args.target_ratio)+"_"+str(args.num_remove)+".json"
+        print(best_pos)
         with open(pos_filename, "w") as f:
             json.dump({"data":best_pos}, f)
 

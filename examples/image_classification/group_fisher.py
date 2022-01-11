@@ -1,4 +1,5 @@
 
+import logging
 import types
 import json
 from collections import OrderedDict
@@ -335,6 +336,9 @@ def compute_positions(model, ordered_groups, torder, parser, position_mode, num_
                 if act not in positions:
                     positions.append(act) # maybe the last transforming layer.
 
+    elif position_mode == 999:
+        return []
+
     elif position_mode == 99: # k-path cover
 
         # get graph
@@ -446,7 +450,7 @@ class PruningCallback(keras.callbacks.Callback):
                  compute_norm_func=None,
                  batch_size=32,
                  gmodel=None,
-                 logging=False):
+                 logging_=False):
         super(PruningCallback, self).__init__()
         self.norm = norm
         self.targets = targets
@@ -469,7 +473,7 @@ class PruningCallback(keras.callbacks.Callback):
         self.compute_norm_func = compute_norm_func
         self.gmodel = gmodel
         self.batch_size = batch_size
-        self.logging = logging
+        self.logging = logging_
         if self.logging:
             self.logs = []
         else:
@@ -814,7 +818,7 @@ def make_group_fisher(model,
                       save_steps=-1,
                       save_prefix=None,
                       save_dir=None,
-                      logging=False):
+                      logging_=False):
 
     gmodel, model, l2g, ordered_groups, torder, parser, gate_mapping = add_gates(model, custom_objects, avoid)
     targets = find_all(gmodel, SimplePruningGate)
@@ -873,7 +877,7 @@ def make_group_fisher(model,
         callback_after_deletion=cbk,
         batch_size=batch_size,
         gmodel=gmodel,
-        logging=logging)
+        logging_=logging_)
 
 
 def prune_step(X, model, teacher_logits, y, pc, print_by_pruning, pbar=None):
