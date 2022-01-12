@@ -51,8 +51,8 @@ def load_data(dataset, model_handler, training_augment=True, batch_size=-1, n_cl
             ds_train = tfds.load(dataset, split="train")
             ds_val = tfds.load(dataset, split="validation")
         else:
-            ds_train = tfds.load(dataset, split="train").cache()
-            ds_val = tfds.load(dataset, split="test").cache()
+            ds_train = tfds.load(dataset, split="train")
+            ds_val = tfds.load(dataset, split="test")
         train_examples = None
         val_examples = None
         is_batched = False
