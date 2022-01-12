@@ -198,7 +198,7 @@ def train_step(X, model, teacher_logits=None, y=None, ret_last_tensor=False):
         return tape, loss
 
 
-def iteration_based_train(dataset, model, model_handler, max_iters, teacher=None, with_label=True, with_distillation=True, callback_before_update=None, stopping_callback=None, augment=True, n_classes=100, eval_steps=-1, validate_func=None):
+def iteration_based_train(dataset, model, model_handler, max_iters, lr_mode=0, teacher=None, with_label=True, with_distillation=True, callback_before_update=None, stopping_callback=None, augment=True, n_classes=100, eval_steps=-1, validate_func=None):
 
     train_data_generator, valid_data_generator, test_data_generator = load_data(dataset, model_handler, training_augment=augment, n_classes=n_classes)
 
@@ -209,7 +209,7 @@ def iteration_based_train(dataset, model, model_handler, max_iters, teacher=None
 
     global_step = 0
     callbacks_ = model_handler.get_callbacks(iters)
-    optimizer = model_handler.get_optimizer()
+    optimizer = model_handler.get_optimizer(lr_mode)
 
     epoch = 0
     with tqdm(total=max_iters, ncols=120) as pbar:

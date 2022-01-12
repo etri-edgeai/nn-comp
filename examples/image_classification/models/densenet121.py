@@ -31,16 +31,21 @@ def preprocess_func(img, dim):
     return img
 
 def get_model(dataset, n_classes=100):
-    densenet = tf.keras.applications.DenseNet121(include_top=False, weights='imagenet', input_shape=input_shape, classes=n_classes)
-    model = Sequential()
-    model.add(densenet)
-    model.add(GlobalAveragePooling2D())
-    if dataset == "cifar100":
-        model.add(Dropout(0.5))
+    if dataset == "imagenet2012":
+        model = tf.keras.applications.DenseNet121(
+            include_top=True, weights='imagenet', input_tensor=None, input_shape=input_shape, pooling=None, classes=1000)
+        return model
     else:
-        model.add(Dropout(0.25))
-    model.add(Dense(n_classes, activation='softmax'))
-    return model
+        densenet = tf.keras.applications.DenseNet121(include_top=False, weights='imagenet', input_shape=input_shape, classes=n_classes)
+        model = Sequential()
+        model.add(densenet)
+        model.add(GlobalAveragePooling2D())
+        if dataset == "cifar100":
+            model.add(Dropout(0.5))
+        else:
+            model.add(Dropout(0.25))
+        model.add(Dense(n_classes, activation='softmax'))
+        return model
 
 def get_train_epochs():
     return 100

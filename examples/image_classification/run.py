@@ -96,7 +96,8 @@ def prune(
     model_path2=None,
     backup_args=None,
     ret_score=False,
-    eval_steps=-1):
+    eval_steps=-1,
+    lr_mode=0):
 
     start_time = time.time()
 
@@ -341,6 +342,7 @@ def prune(
         gg,
         model_handler,
         max_iters,
+        lr_mode=lr_mode,
         teacher=tt,
         with_label=with_label,
         with_distillation=distillation and not label_only,
@@ -402,6 +404,7 @@ def run():
     parser.add_argument('--num_blocks', type=int, default=5, help='model')
     parser.add_argument('--period', type=int, default=25, help='model')
     parser.add_argument('--min_steps', type=int, default=-1, help='model')
+    parser.add_argument('--lr_mode', type=int, default=0, help='model')
     parser.add_argument('--target_ratio', type=float, default=0.5, help='model')
     parser.add_argument('--save_steps', type=int, default=-1, help='model')
     parser.add_argument('--log_file', type=str, default=None, help="method")
@@ -524,7 +527,8 @@ def run():
             save_steps=args.save_steps,
             model_path2=args.model_path2,
             backup_args=vars(args),
-            eval_steps=args.eval_steps)
+            eval_steps=args.eval_steps,
+            lr_mode=args.lr_mode)
 
     elif args.mode == "find":
 
