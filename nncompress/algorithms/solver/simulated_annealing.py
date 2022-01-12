@@ -35,8 +35,6 @@ class SimulatedAnnealingSolver(Solver):
         self._best = state
         T = -1
         for i in range(self.max_niters):
-            if i > 0 and i % 10 == 0:
-                print("[%s] %d iterations, best score:%.4f, ouptut:%s" % (time.ctime(time.time()), i, self._best_score, str(self._best)))
             T = self._temp_func(i, self.max_niters, T)
             score = self._score_func(state)
             new_state = state.get_next()
@@ -53,7 +51,7 @@ class SimulatedAnnealingSolver(Solver):
                 self._best_score = new_score
 
             prob = transition_prob(new_score - score, T)
-            print("Score:%.4f   New score:%.4f Best score:%.4f  prob:%.4f" % (score, new_score, self._best_score, prob))
+            print("[%s] %d iterations, Score:%.4f   New score:%.4f Best score:%.4f  prob:%.4f, output:%s" % (time.ctime(time.time()), i, score, new_score, self._best_score, prob, str(self._best)))
             transition = False
             if prob >= random.random():
                 state = new_state
