@@ -61,7 +61,6 @@ class NNParser(object):
 
         self._graph = nx.MultiDiGraph()
         self._model_dict = None
-        #self._layers_dict = None
 
         self._id_cnt = {}
         self._basestr = basestr
@@ -85,12 +84,6 @@ class NNParser(object):
         else:
             return self._basestr + prefix + "_" + str(self._id_cnt[prefix])
 
-    """
-    def get_layer_dict(self, name):
-        assert name in self._layers_dict
-        return copy.deepcopy(self._layers_dict[name])
-    """
-
     def get_nodes(self, ids):
         """Return the nodes upon `ids`
 
@@ -102,6 +95,12 @@ class NNParser(object):
 
         """
         return [(id_, self._graph.nodes[id_]) for id_ in ids]
+
+    def get_layer_dict(self, name):
+        for layer_dict in self._model_dict["config"]["layers"]:
+            if layer_dict["config"]["name"] == name:
+                return copy.deepcopy(layer_dict)
+        return None
 
     def restore_id(self, prefix):
         """This function is used to restore the id counter of `get_id`.
