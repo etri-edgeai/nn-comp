@@ -1,4 +1,5 @@
 """ Sub-network Handling """
+from abc import ABC, abstractmethod
 
 import tensorflow as tf
 from tensorflow import keras
@@ -6,11 +7,15 @@ from tensorflow.keras import layers
 import numpy as np
 
 from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
+from nncompress.backend.tensorflow_ import SimplePruningGate
+from nncompress.backend.tensorflow_.transformation import parse, inject, cut, unfold
 
 class ModelHouse(object):
 
     def __init__(self, model, custom_objects=None):
-       
+
+        model = unfold(model, custom_objects)
+
         self._parser = PruningNNParser(model, custom_objects=custom_objects)
         self._parser.parse()
 
@@ -24,29 +29,32 @@ class ModelHouse(object):
 
         self._model = model
         self._modules = {
-            i: ModuleHolder(i, group)
+            i: PruningModuleHolder(group)
             for i, group in enumerate(groups_)
         }
 
         outputs = []
         outputs.extend(self._model.outputs)
-        for i, module in self._modules.items():
-            for name, alters in module.alternatives.items():
-                for alter in alters:
-                    outputs.append(alter[-1].output) # projection
+        for _, module in self._modules.items():
+            for name, alters in module.alternative.items():
+                for alter, out_ in alters:
+                    outputs.append(out_)
 
-        self.house = tf.keras.Model(self._model.input, outputs) # for test
-        self.self_distillation_loss()
+        self.inputs = self._model.inputs
+        self.outputs = outputs
 
-    def self_distillation_loss(self):
+        #self.house = tf.keras.Model(self._model.input, outputs) # for test
+        #self.self_distillation_loss()
+
+    def add_self_distillation_loss(self, house, scale=0.1):
         # Compute self-distillation-loss
+        mse = tf.keras.losses.MeanSquaredError()
         for i, module in self._modules.items():
-            for name, alters in module.alternatives.items():
+            for name, alters in module.alternative.items():
                 # diff
-                layer = self.house.get_layer(name)       
-                for alter in alters:
-                    mse = tf.keras.losses.MeanSquaredError()
-                    self.house.add_loss(mse(layer.output, alter[-1].output))
+                layer = house.get_layer(name)       
+                for alter, out_ in alters:
+                    house.add_loss(mse(layer.output, out_)*scale)
 
     def query(self, ratio):
         """Lightweight model with compression ratio.
@@ -64,7 +72,7 @@ class ModelHouse(object):
             p_i = -1
             for i, module in self._modules.items():
                 layer_params = 0
-                for layer in module.layers:
+                for layer in module.get_subnet_as_list():
                     layer_params += np.prod(layer.get_weights()[0].shape)
                 if i not in compressed:
                     compressed[i] = -1
@@ -82,55 +90,121 @@ class ModelHouse(object):
 
         for i, aid in compressed.items():
             module = self._modules[i]
-            alters = module.alternatives[aid]
+            alters = module.alternative[aid]
 
             # use parser to replace module with alters
             # ...
 
 
-class ModuleHolder(object):
+class ModuleHolder(ABC):
     """
         Can be a layer or layers.
+        Abstract Layer
+
+        Channel Pruning
+        Identity
+        Replace with the same input/output shape
 
     """
     
-    def __init__(self, idx, group, custom_objects=None):
-        self.layers = [ l for l in group ]
-        self.alternatives = None
-        self.scales = [0.5, 0.75, 0.875]
-
+    def __init__(self, subnet, custom_objects=None):
+        self.subnet = subnet
+        self.alternative = None
         self.build()
 
+    @property
+    def subnet(self):
+        if len(self._subnet) == 1:
+            return self._subnet[0]
+        else:   
+            return self._subnet
+
+    @subnet.setter
+    def subnet(self, subnet_):
+        if type(subnet_) == list:
+            self._subnet = subnet_
+        else:
+            self._subnet = [subnet_]
+
+    def get_subnet_as_list(self):
+        return self._subnet
+
+    @abstractmethod
     def build(self):
-        self.alternatives = {}
+        """Build the index for this module
+
+        """
+
+    def compute_params(self, idx):
+        if idx == -1:
+            layer_params = 0
+            for layer in self.get_subnet_as_list():
+                for w in layer.get_weights(): 
+                    layer_params += np.prod(w.shape)
+            return layer_params
+        else:
+            layer_params = 0
+            for name, alters in self.alternative.items():
+                alter, out_ = alters[idx]
+                for layer in alter.layers:
+                    for w in layer.get_weights():
+                        layer_params += np.prod(w.shape)
+            return layer_params
+
+class PruningModuleHolder(ModuleHolder):
+
+    def __init__(self, subnet, custom_objects=None):
+        self.scales = [0.25, 0.5, 0.75]
+        super(PruningModuleHolder, self).__init__(subnet, custom_objects)
+
+    def compute_params(self, idx):
+        if idx == -1:
+            return super(PruningModuleHolder, self).compute_parmas(idx)
+        else:
+            sum_ = 0
+            for name, alters in self.alternatives.items():
+                alter, out_ = alters[idx]
+                pruned = alter.layers[0]
+                gate = alter.layers[1]
+                pw = pruned.get_weights()[0][:,:,:,gate.gates == 1.0]
+                print(pruned.get_weights()[0].shape)
+                print(pw.shape)
+                print(np.count_nonzero(gate.gates))
+
+    def build(self):
+        self.alternative = {} # init alternative
 
         for idx, scale in enumerate(self.scales):
 
-            # setup common mask
-            w = self.layers[0].get_weights()[0] # we can use another criterion for computing mask.
+            w = self._subnet[0].get_weights()[0] # we can use another criterion for computing mask.
             w = np.abs(w)
             sum_ = np.sum(w, axis=tuple([i for i in range(len(w.shape)-1)]))
             sorted_ = np.sort(sum_, axis=None)
             val = sorted_[int((len(sorted_)-1)*scale)]
-            removal = (sum_ >= val).astype(np.float32)
+            keep = (sum_ >= val).astype(np.float32)
 
-            for layer in self.layers:
-                if layer.name not in self.alternatives:
-                    self.alternatives[layer.name] = []
+            layers = self._subnet
+            for layer in layers:
+                if layer.name not in self.alternative:
+                    self.alternative[layer.name] = []
 
                 # Assumption: convolution
                 config = layer.get_config()
-                old = config["filters"]
-                config["filters"] = config["filters"] - np.sum(removal)
-                config["name"] = config["name"] + "_" + str(idx)
+                config["name"] = config["name"] + "_prune_" + str(idx)
+                pruned = tf.keras.layers.Conv2D.from_config(config)
+                gate = SimplePruningGate(config["filters"])
+                gate.collecting = False
 
-                pruned = layers.Conv2D.from_config(config)
-                expand = layers.Conv2D(old, (1,1), name=config["name"]+"_projection")
-                self.alternatives[layer.name].append([pruned, expand])
+                input_ = tf.keras.layers.Input(layer.input_shape[1:])
+                gate(pruned(input_))
+                gate.gates.assign(keep)
+                model_ = tf.keras.Model(inputs=input_, outputs=gate.output)
 
-                # draw model
-                pruned(layer.input)
-                expand(pruned.output)
+                output = model_(layer.input)
+                self.alternative[layer.name].append((model_, output[0])) # gate returns two tensors.
+
+
+
 
 def test():
 
@@ -175,6 +249,8 @@ def test():
     tf.keras.utils.plot_model(model, to_file="original.png", show_shapes=True)
 
     mh = ModelHouse(model)
+
+    tf.keras.utils.plot_model(mh.house, to_file="house.pdf", show_shapes=True)
 
     # random data test
     data = np.random.rand(1,32,32,3)
