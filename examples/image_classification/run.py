@@ -478,6 +478,11 @@ def run():
         model_handler.compile(model, run_eagerly=True)
         _, _, test_data_gen = load_data(dataset, model_handler, n_classes=n_classes)
         print(model.evaluate(test_data_gen, verbose=1)[1])
+
+        from keras_flops import get_flops
+        flops = get_flops(model, batch_size=1)
+        print(f"FLOPS: {flops / 10 ** 9:.06} G")
+
     elif args.mode == "train": # train
         model = model_handler.get_model(dataset, n_classes=n_classes)
         train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir)
