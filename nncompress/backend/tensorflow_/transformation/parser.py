@@ -46,7 +46,7 @@ class NNParser(object):
     
     """
 
-    def __init__(self, model, basestr="", custom_objects=None):
+    def __init__(self, model, basestr="", custom_objects=None, namespace=None):
 
         if type(model) == keras.Sequential:
             input_layer = keras.layers.Input(batch_shape=model.layers[0].input_shape, name="seq_input")
@@ -64,6 +64,7 @@ class NNParser(object):
 
         self._id_cnt = {}
         self._basestr = basestr
+        self._namespace = namespace
 
     def get_id(self, prefix):
         """This function gives an identifier for a prefix.
@@ -74,15 +75,21 @@ class NNParser(object):
             a str, the identifier under the given prefix scope.
 
         """
-        if prefix not in self._id_cnt:
-            self._id_cnt[prefix] = 0
-        else:
-            self._id_cnt[prefix] += 1
+        ret = None
+        while ret is None:
+            if prefix not in self._id_cnt:
+                self._id_cnt[prefix] = 0
+            else:
+                self._id_cnt[prefix] += 1
 
-        if self._id_cnt[prefix] == 0:
-            return self._basestr + prefix
-        else:
-            return self._basestr + prefix + "_" + str(self._id_cnt[prefix])
+            if self._id_cnt[prefix] == 0:
+                ret = self._basestr + prefix
+            else:
+                ret = self._basestr + prefix + "_" + str(self._id_cnt[prefix])
+            if self._namespace is not None and ret in self._namespace:
+                ret = None # duplication
+        self._namespace.add(ret)
+        return ret
 
     def get_nodes(self, ids):
         """Return the nodes upon `ids`
@@ -205,6 +212,7 @@ class NNParser(object):
             for flow_idx in range(len(gates[target[0]])):
                 # Handling inputs to replacement block.
                 for t, r in ex_map[0]:
+                    gates[t]
                     flow = self._graph.nodes.data()[t]["layer_dict"]["inbound_nodes"][gates[t][flow_idx]]
                     if has_inbound[r]:
                         # The first flow is the input from out of block.

@@ -22,8 +22,7 @@ tf.keras.utils.plot_model(model, to_file="original.png", show_shapes=True)
 
 mh = ModelHouse(model)
 
-house = tf.keras.Model(mh.inputs, mh.outputs)
-mh.add_self_distillation_loss(house, 0.001)
+house = mh.make_train_graph(range_=[3,5])
 
 data = np.random.rand(1,224,224,3)
 y = house(data)
@@ -32,4 +31,9 @@ tf.keras.utils.plot_model(house, to_file="house.pdf", show_shapes=True)
 
 model_handler.compile(house, run_eagerly=True)
 
+print(model.summary())
+print(house.input)
+
 train(dataset, house, "test", model_handler, 5, callbacks=None, augment=True, exclude_val=False, n_classes=100)
+
+#mh.extract({5: 0, 1: 1})
