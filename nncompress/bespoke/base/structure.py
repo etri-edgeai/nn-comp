@@ -1,5 +1,6 @@
 """ Sub-network Handling """
 from abc import ABC, abstractmethod
+import json
 
 import tensorflow as tf
 from tensorflow import keras
@@ -9,52 +10,162 @@ import numpy as np
 from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
 from nncompress.backend.tensorflow_ import SimplePruningGate
 from nncompress.backend.tensorflow_.transformation import parse, inject, cut, unfold
+from nncompress.bespoke.base.generator import PruningGenerator
 
 class ModelHouse(object):
 
     def __init__(self, model, custom_objects=None):
 
         model = unfold(model, custom_objects)
+        self._model = model
 
         self._parser = PruningNNParser(model, custom_objects=custom_objects)
         self._parser.parse()
 
+        self.custom_objects = custom_objects
+        if self.custom_objects is None:
+            self.custom_objects = {}
+        self.custom_objects["SimplePruningGate"] = SimplePruningGate
+
+        self.namespace = set() # For guaranteeing the uniqueness of additional layers.
+        self.build()
+
+
+    def build(self):
+        min_layers = 5
+
+        # construct t-rank
+        v = self._parser.traverse()
+        trank = {
+            name:idx
+            for idx, (name, _) in enumerate(v)
+        }
+        rtrank = {
+            idx:name
+            for name, idx in trank.items()
+        }
+        joints = set(self._parser.get_joints())
+
         groups = self._parser.get_sharing_groups()
         groups_ = []
+        r_groups = {}
         for group in groups:
             group_ = []
             for layer_name in group:
-                group_.append(model.get_layer(layer_name))
+                group_.append(self._model.get_layer(layer_name))
+                r_groups[layer_name] = group_
             groups_.append(group_)
 
-        self._model = model
-        self._modules = {
-            i: PruningModuleHolder(group)
-            for i, group in enumerate(groups_)
-        }
+        def compute_constraints(layers):
+            constraints = []
+            for layer in layers:
+                if layer.name in r_groups:
+                    is_already = False
+                    for c in constraints:
+                        if c == r_groups[layer.name]:
+                            is_already = True
+                            break
+                    if not is_already:
+                        constraints.append(r_groups[layer.name])
+            return constraints
 
+        def is_compressible(layers):
+            compressible = False
+            for layer in layers:
+                if layer.__class__.__name__ in ["Conv2D", "Dense", "DepthwiseConv2D"]:
+                    compressible = True
+                    break
+            return compressible
+
+        self._modules = []
+        layers_ = []
+        for idx in range(len(trank)):
+            name = rtrank[idx]
+            if len(layers_) > min_layers and name in joints:
+                if is_compressible(layers_):
+                    # make subnet from layers_                 
+                    subnet = self._parser.get_subnet(layers_, self._model) 
+                    constraints = compute_constraints(layers_)
+                    module = ModuleHolder(subnet[0], subnet[1], subnet[2], constraints, self.namespace)
+                    self._modules.append(module)
+                layers_ = []
+            else:
+                layers_.append(self._model.get_layer(name))
+        if len(layers_) > 0 and is_compressible(layers_):
+            constraints = compute_constraints(layers_)
+            subnet = self._parser.get_subnet(layers_, self._model)
+            module = ModuleHolder(subnet[0], subnet[1], subnet[2], constraints, self.namespace)
+            self._modules.append(module)
+
+    def make_train_graph(self, scale=0.1, range_=None):
+        """Make a training graph for this model house.
+
+        """
         outputs = []
         outputs.extend(self._model.outputs)
-        for _, module in self._modules.items():
-            for name, alters in module.alternative.items():
-                for alter, out_ in alters:
+        output_map = []
+        for i, module in enumerate(self._modules):
+            if range_ is not None and (i < range_[0] or i > range_[1]):
+                continue
+
+            for alter in module.alternatives:
+                inputs_ = [ self._model.get_layer(layer).output for layer in module.inputs ]
+                if type(module.subnet.inputs) == list:
+                    out_ = alter(inputs_)
+                else:
+                    out_ = alter(inputs_[0])
+                tout = [ self._model.get_layer(layer).output for layer in module.outputs ]
+                if type(out_) != list:
+                    tout = tout[0]
                     outputs.append(out_)
+                else:
+                    outputs.extend(out_)
+                output_map.append((tout, out_))
 
-        self.inputs = self._model.inputs
-        self.outputs = outputs
+        house = tf.keras.Model(self._model.inputs, outputs) # for test
 
-        #self.house = tf.keras.Model(self._model.input, outputs) # for test
-        #self.self_distillation_loss()
-
-    def add_self_distillation_loss(self, house, scale=0.1):
-        # Compute self-distillation-loss
+        # add loss
         mse = tf.keras.losses.MeanSquaredError()
-        for i, module in self._modules.items():
-            for name, alters in module.alternative.items():
-                # diff
-                layer = house.get_layer(name)       
-                for alter, out_ in alters:
-                    house.add_loss(mse(layer.output, out_)*scale)
+        for (t, s) in output_map:
+            house.add_loss(mse(t, s)*scale)
+
+        return house
+
+
+    def extract(self, recipe):
+
+        replacing_mappings = []
+        in_maps = None
+        ex_maps = []
+        for idx, aidx in recipe.items():
+            module = self._modules[idx]
+            alters = module.get_alternative(aidx)
+            
+            is_change_shapes = module.is_change_shapes()
+        
+            for subnet, alter in alters:
+                r, _, input_getter, output_ = alter
+                if type(subnet) != list:
+                    subnet = [subnet]
+
+                # construct replacement arguments
+                target = [ layer.name for layer in subnet ]
+                replacement = json.loads(r.to_json())["config"]["layers"]
+                ex_map = [
+                    [(target[0], input_getter.name)],
+                    [(target[-1], replacement[-1]["name"], 0, 0)]
+                ]
+                ex_maps.append(ex_map)
+                replacing_mappings.append((target, replacement))
+
+        print(replacing_mappings)
+
+        # Conduct replace_block
+        model_dict = self._parser.replace_block(replacing_mappings, in_maps, ex_maps, self.custom_objects)
+        model_json = json.dumps(model_dict)
+        ret = tf.keras.models.model_from_json(model_json, custom_objects=self.custom_objects)
+        print(ret.summary())
+        xxx
 
     def query(self, ratio):
         """Lightweight model with compression ratio.
@@ -95,8 +206,7 @@ class ModelHouse(object):
             # use parser to replace module with alters
             # ...
 
-
-class ModuleHolder(ABC):
+class ModuleHolder(object):
     """
         Can be a layer or layers.
         Abstract Layer
@@ -107,11 +217,17 @@ class ModuleHolder(ABC):
 
     """
     
-    def __init__(self, subnet, custom_objects=None):
+    def __init__(self, subnet, inputs, outputs, constraints, namespace, custom_objects=None):
         self.subnet = subnet
-        self.alternative = None
+        self.inputs = inputs
+        self.outputs = outputs
+        self.constraints = constraints
+        self.namespace = namespace
+        self.alternatives = []
+        self.custom_objects = custom_objects
         self.build()
 
+    """
     @property
     def subnet(self):
         if len(self._subnet) == 1:
@@ -128,82 +244,18 @@ class ModuleHolder(ABC):
 
     def get_subnet_as_list(self):
         return self._subnet
-
-    @abstractmethod
-    def build(self):
-        """Build the index for this module
-
-        """
-
-    def compute_params(self, idx):
-        if idx == -1:
-            layer_params = 0
-            for layer in self.get_subnet_as_list():
-                for w in layer.get_weights(): 
-                    layer_params += np.prod(w.shape)
-            return layer_params
-        else:
-            layer_params = 0
-            for name, alters in self.alternative.items():
-                alter, out_ = alters[idx]
-                for layer in alter.layers:
-                    for w in layer.get_weights():
-                        layer_params += np.prod(w.shape)
-            return layer_params
-
-class PruningModuleHolder(ModuleHolder):
-
-    def __init__(self, subnet, custom_objects=None):
-        self.scales = [0.25, 0.5, 0.75]
-        super(PruningModuleHolder, self).__init__(subnet, custom_objects)
-
-    def compute_params(self, idx):
-        if idx == -1:
-            return super(PruningModuleHolder, self).compute_parmas(idx)
-        else:
-            sum_ = 0
-            for name, alters in self.alternatives.items():
-                alter, out_ = alters[idx]
-                pruned = alter.layers[0]
-                gate = alter.layers[1]
-                pw = pruned.get_weights()[0][:,:,:,gate.gates == 1.0]
-                print(pruned.get_weights()[0].shape)
-                print(pw.shape)
-                print(np.count_nonzero(gate.gates))
+    """
 
     def build(self):
-        self.alternative = {} # init alternative
+        pg = PruningGenerator(self.namespace)
 
-        for idx, scale in enumerate(self.scales):
+        # Generate alternatives
+        self.alternatives = pg.build(self.subnet)
 
-            w = self._subnet[0].get_weights()[0] # we can use another criterion for computing mask.
-            w = np.abs(w)
-            sum_ = np.sum(w, axis=tuple([i for i in range(len(w.shape)-1)]))
-            sorted_ = np.sort(sum_, axis=None)
-            val = sorted_[int((len(sorted_)-1)*scale)]
-            keep = (sum_ >= val).astype(np.float32)
+class Alternative(object):
 
-            layers = self._subnet
-            for layer in layers:
-                if layer.name not in self.alternative:
-                    self.alternative[layer.name] = []
-
-                # Assumption: convolution
-                config = layer.get_config()
-                config["name"] = config["name"] + "_prune_" + str(idx)
-                pruned = tf.keras.layers.Conv2D.from_config(config)
-                gate = SimplePruningGate(config["filters"])
-                gate.collecting = False
-
-                input_ = tf.keras.layers.Input(layer.input_shape[1:])
-                gate(pruned(input_))
-                gate.gates.assign(keep)
-                model_ = tf.keras.Model(inputs=input_, outputs=gate.output)
-
-                output = model_(layer.input)
-                self.alternative[layer.name].append((model_, output[0])) # gate returns two tensors.
-
-
+    def __init__(self, model):
+        self._model = model
 
 
 def test():
@@ -250,11 +302,12 @@ def test():
 
     mh = ModelHouse(model)
 
-    tf.keras.utils.plot_model(mh.house, to_file="house.pdf", show_shapes=True)
-
     # random data test
     data = np.random.rand(1,32,32,3)
-    y = mh.house(data)
+    house = mh.make_train_graph()
+
+    tf.keras.utils.plot_model(house, to_file="house.pdf", show_shapes=True)
+    y = house(data)
 
     mh.query(0.5)
 

@@ -55,8 +55,8 @@ class PruningNNParser(NNParser):
     
     """
 
-    def __init__(self, model, basestr="", custom_objects=None, gate_class=None):
-        super(PruningNNParser, self).__init__(model, basestr=basestr, custom_objects=custom_objects)
+    def __init__(self, model, basestr="", custom_objects=None, gate_class=None, namespace=None):
+        super(PruningNNParser, self).__init__(model, basestr=basestr, custom_objects=custom_objects, namespace=namespace)
         self._sharing_groups = []
         self._avoid_pruning = set()
         self._t2g = None
@@ -217,7 +217,7 @@ class PruningNNParser(NNParser):
         return act[0]
 
 
-    def inject(self, avoid=None, with_mapping=False, with_splits=False):
+    def inject(self, avoid=None, with_mapping=False, with_splits=False, allow_pruning_last=False):
         """This function injects differentiable gates into the model.
 
         # Arguments.
@@ -233,7 +233,8 @@ class PruningNNParser(NNParser):
             avoid = set()
         if type(avoid) != set: #setify
             avoid = set(avoid)
-        avoid = avoid.union(self._avoid_pruning)
+        if not allow_pruning_last:
+            avoid = avoid.union(self._avoid_pruning)
 
         model_dict = copy.deepcopy(self._model_dict)
         layers_dict = {}
@@ -348,6 +349,9 @@ class PruningNNParser(NNParser):
 
         # create sub-layers to handle shift op.
         self.traverse(node_callbacks=[modify_output])
+
+        model_dict["name"] = self.get_id("gmodel")
+        model_dict["config"]["name"] = self.get_id("gmodel")
 
         model_json = json.dumps(model_dict)
         custom_objects = {self._gate_class.__name__:self._gate_class, "StopGradientLayer":StopGradientLayer}
