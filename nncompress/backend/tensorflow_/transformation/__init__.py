@@ -108,7 +108,9 @@ def unfold(model, custom_objects=None):
     output_mapping = {}
     new_layers = []
     input_mapping = {}
+    layers_dict = {}
     for idx, layer in enumerate(model_dict["config"]["layers"]):
+        layers_dict[layer["name"]] = layer
         if layer["class_name"] == "Functional": 
             for sub_layer in layer["config"]["layers"]:
                 layers_.append(sub_layer)
@@ -120,6 +122,14 @@ def unfold(model, custom_objects=None):
         else:
             new_layers.append(layer)
     model_dict["config"]["layers"] = new_layers
+
+    new_outputs = []
+    for output in model_dict["config"]["output_layers"]:
+        if layers_dict[output[0]]["class_name"] == "Functional":
+            new_outputs.append(output_mapping[output[0]][0])
+        else:
+            new_outputs.append(output)
+    model_dict["config"]["output_layers"] = new_outputs
 
     for layer in model_dict["config"]["layers"]:
         if layer["class_name"] != "Functional": 
@@ -161,7 +171,7 @@ def unfold(model, custom_objects=None):
             continue
 
         if "Conv2D" in layer["class_name"] or "Dense" in layer["class_name"]:
-            if layer["config"]["activation"] is not None:
+            if layer["config"]["activation"] is not None and layer["config"]["activation"] != "linear":
                 activation = layer["config"]["activation"]
                 layer["config"]["activation"] = None
 
