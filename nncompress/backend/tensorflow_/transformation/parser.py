@@ -66,6 +66,10 @@ class NNParser(object):
         self._basestr = basestr
         self._namespace = namespace
 
+    @property
+    def custom_objects(self):
+        return self._custom_objects
+
     def get_id(self, prefix):
         """This function gives an identifier for a prefix.
 
@@ -273,7 +277,7 @@ class NNParser(object):
         return model_dict
 
 
-    def get_joints(self):
+    def get_joints(self, filter_=None):
 
         if len(self.torder) != self._graph.number_of_nodes():
             return
@@ -286,7 +290,11 @@ class NNParser(object):
             name = node_data["layer_dict"]["config"]["name"]
 
             if max_idx[0] <= self.torder[name]:
-                joints.append(name)
+                if filter_ is not None:
+                    if filter_(node_data):
+                        joints.append(name)
+                else:
+                    joints.append(name)
 
             neighbors = self._graph.out_edges(name, data=True)
             for e in neighbors:

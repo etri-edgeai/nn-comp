@@ -59,7 +59,7 @@ class DifferentiableGateFormula(Formula):
 class SimplePruningGateFormula(Formula):
 
     def __init__(self):
-        super(PruningGateFormula, self).__init__()
+        super(SimplePruningGateFormula, self).__init__()
 
     def compute(self, input):
         return M.cmul(input, self.binary_selection())
