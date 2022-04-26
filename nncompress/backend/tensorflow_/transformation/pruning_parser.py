@@ -73,10 +73,10 @@ class PruningNNParser(NNParser):
                 result = []
                 for i_ in i:
                     result.append(extract(i_))
-                if type(i) in [tuple, OrderedSet]:
-                    return tuple(OrderedSet(result))
+                if type(i) in [tuple, list]:
+                    return tuple(list(result))
                 else:
-                    return frozenset(OrderedSet(result))
+                    return frozenset(list(result))
             else:
                 return i[0]
 
@@ -92,12 +92,11 @@ class PruningNNParser(NNParser):
                 is_last_t = h.is_transformer(0)
                 if not is_last_t: # single group
                     continue
-                group_ = OrderedSet([layer[0]])
+                group_ = [layer[0]]
             else:
                 group_ = []
                 for i in group:
                     group_.append(extract(i))
-                group_ = OrderedSet(group_)
 
             candidates = []
             for target in self._sharing_groups:
@@ -112,7 +111,7 @@ class PruningNNParser(NNParser):
                 for cand in candidates:
                     for c in cand:
                         if not has_intersection(new_group, c):
-                            new_group.add(c)
+                            new_group.append(c)
                     self._sharing_groups.remove(cand)
                 self._sharing_groups.append(new_group)
 
@@ -129,17 +128,19 @@ class PruningNNParser(NNParser):
         affecting_layers = OrderedDict()
         for n in self._graph.nodes(data=True):
             for idx in range(n[1]["nlevel"]):
-                affecting_layers[(n[0], idx)] = OrderedSet()
+                affecting_layers[(n[0], idx)] = []
 
         def pass_(e):
             src = self._graph.nodes.data()[e[0]]
             dst = self._graph.nodes.data()[e[1]]
             level_change = e[2]["level_change"]
-            if get_handler(src["layer_dict"]["class_name"]).is_transformer(e[2]["tensor"]):
-                affecting_layers[(e[1], level_change[1])].add((e[0], level_change[0], e[2]["tensor"]))
+            if get_handler(src["layer_dict"]["class_name"]).is_transformer(e[2]["tensor"]) and\
+                not get_handler(dst["layer_dict"]["class_name"]).is_concat():
+                affecting_layers[(e[1], level_change[1])].append((e[0], level_change[0], e[2]["tensor"]))
 
             elif get_handler(dst["layer_dict"]["class_name"]).is_concat():
-                temp = list(affecting_layers[(e[1], level_change[1])])
+ 
+                temp = affecting_layers[(e[1], level_change[1])]
                 loc = None
                 cnt = 0
                 for fidx, flow in enumerate(dst["layer_dict"]["inbound_nodes"]):
@@ -153,15 +154,18 @@ class PruningNNParser(NNParser):
                         break
                 if len(temp) == 0:
                     temp = list(range(cnt))
-                temp[loc] = frozenset(affecting_layers[(e[0], level_change[0])])
-                affecting_layers[(e[1], level_change[1])] = OrderedSet(temp)
+                if get_handler(src["layer_dict"]["class_name"]).is_transformer(e[2]["tensor"]):
+                    temp[loc] = frozenset([(e[0], level_change[0], e[2]["tensor"])])
+                else:
+                    temp[loc] = frozenset(affecting_layers[(e[0], level_change[0])])
+                affecting_layers[(e[1], level_change[1])] = temp
 
             elif get_handler(src["layer_dict"]["class_name"]).is_concat():
-                affecting_layers[(e[1], level_change[1])].add(tuple(affecting_layers[(e[0], level_change[0])]))
+                affecting_layers[(e[1], level_change[1])].append(tuple(affecting_layers[(e[0], level_change[0])]))
 
             else:
                 if (e[0], level_change[0]) in affecting_layers: # To handle leaves
-                    affecting_layers[(e[1], level_change[1])].update(affecting_layers[(e[0], level_change[0])])
+                    affecting_layers[(e[1], level_change[1])].extend(affecting_layers[(e[0], level_change[0])])
 
         self.traverse(neighbor_callbacks=[pass_])
         return affecting_layers
@@ -288,28 +292,27 @@ class PruningNNParser(NNParser):
         if with_splits:
             def extract(g):
                 ret = []
-                if type(g) in [OrderedSet, tuple, frozenset]:
+                if type(g) in [OrderedSet, list, tuple, frozenset]:
                     for g_ in g:
                         ret += extract(g_)
                 else:
-                    ret.append([g])
+                    ret.append((g,))
                 return ret
             sharing_groups_ = []
             for g in self._sharing_groups:
                 sharing_groups_ += extract(g)
+            sharing_groups_ = OrderedSet(sharing_groups_)
         else:
             sharing_groups_ = self._sharing_groups
 
         gate_mapping = {}
         for group in sharing_groups_:
-            #if len(avoid.intersection(group)) > 0:
-            #    continue
-            # TODO: not tested yet
+
             if has_intersection(avoid, group):
                 continue
 
             # Create a gate
-            channels = self.get_nchannel(list(group)[0])
+            channels = self.get_nchannel(group[0])
             gate = self._gate_class(channels, name=self.get_id("gate"))
             gate_dict = serialize(gate)
             model_dict["config"]["layers"].append(gate_dict)
