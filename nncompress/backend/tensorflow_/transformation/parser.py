@@ -64,7 +64,19 @@ class NNParser(object):
 
         self._id_cnt = {}
         self._basestr = basestr
-        self._namespace = namespace
+        if namespace is None:
+            self._namespace = set()
+        else:
+            self._namespace = namespace
+
+    def copy_model(self):
+        model = tf.keras.models.clone_model(self._model)
+        model.set_weights(self._model.get_weights())
+        return model
+
+    @property
+    def model(self):
+        return self._model
 
     @property
     def custom_objects(self):
@@ -140,17 +152,19 @@ class NNParser(object):
         # TODO: handling multiple in/out shapes
         layer = self._model.get_layer(name)
         if inbound:
-            if type(layer.input_shape) == tuple:
-                return layer.input_shape[-1]
-            elif type(layer.input_shape) == list:
-                return layer.input_shape[0][-1]
+            input_shape = layer.get_input_shape_at(0)
+            if type(input_shape) == tuple:
+                return input_shape[-1]
+            elif type(input_shape) == list:
+                return input_shape[0][-1]
             else:
                 raise NotImplementedError("`output_shape` is neither a list nor a tuple.")
         else:
-            if type(layer.output_shape) == tuple:
-                return layer.output_shape[-1]
-            elif type(layer.output_shape) == list:
-                return layer.output_shape[0][-1]
+            output_shape = layer.get_output_shape_at(0)
+            if type(output_shape) == tuple:
+                return output_shape[-1]
+            elif type(output_shape) == list:
+                return output_shape[0][-1]
             else:
                 raise NotImplementedError("`output_shape` is neither a list nor a tuple.")
 
@@ -216,7 +230,6 @@ class NNParser(object):
             for flow_idx in range(len(gates[target[0]])):
                 # Handling inputs to replacement block.
                 for t, r in ex_map[0]:
-                    gates[t]
                     flow = self._graph.nodes.data()[t]["layer_dict"]["inbound_nodes"][gates[t][flow_idx]]
                     if has_inbound[r]:
                         # The first flow is the input from out of block.
@@ -267,17 +280,41 @@ class NNParser(object):
                                     inbound[2] = r_tensor
                                     # level and tensor idx are not changed.
 
-            model_dict["config"]["layers"].extend(replacement)
             to_remove = []
             for layer_dict in model_dict["config"]["layers"]:
                 if layer_dict["name"] in target_set:
                     to_remove.append(layer_dict)
             for r in to_remove:
                 model_dict["config"]["layers"].remove(r)
+            model_dict["config"]["layers"].extend(replacement)
         return model_dict
 
+    def get_randomwalk(self, start, p=0.25, types=None):
 
-    def get_joints(self, filter_=None):
+        trail = []
+        def callback_(n, level):
+            node_data = self._graph.nodes[n]
+            name = node_data["layer_dict"]["config"]["name"]
+            trail.append(name)
+
+        def stop_cond(e, is_edge):
+            if is_edge:
+                return False
+            curr, level = e
+            if types is not None:
+                if self._model.get_layer(curr).__class__ in types:
+                    if np.random.random() > p:
+                        return True
+                    else:
+                        return False
+            return False
+
+        s = (start, self._graph.nodes(data=True)[start])
+        self.traverse(node_callbacks=[callback_], sources=[s], stopping_condition=stop_cond)
+        return trail
+
+
+    def get_joints(self, filter_=None, start=None):
 
         if len(self.torder) != self._graph.number_of_nodes():
             return
@@ -288,7 +325,6 @@ class NNParser(object):
         def callback_(n, level): 
             node_data = self._graph.nodes[n]
             name = node_data["layer_dict"]["config"]["name"]
-
             if max_idx[0] <= self.torder[name]:
                 if filter_ is not None:
                     if filter_(node_data):
@@ -299,10 +335,14 @@ class NNParser(object):
             neighbors = self._graph.out_edges(name, data=True)
             for e in neighbors:
                 src, dst, level_change, inbound_idx = e[0], e[1], e[2]["level_change"], e[2]["inbound_idx"]
-                if max_idx[0] < self.torder[dst]:
+                if max_idx[0] < self.torder[dst] and (start is None or (start is not None and src != start)):
                     max_idx[0] = self.torder[dst]
-          
-        self.traverse(node_callbacks=[callback_])
+
+        if start is not None:
+            s = (start, self._graph.nodes(data=True)[start])
+            self.traverse(node_callbacks=[callback_], sources=[s])
+        else:
+            self.traverse(node_callbacks=[callback_])
         return joints
 
     def first_common_descendant(self, names, joints, is_transforming=True):
@@ -525,7 +565,7 @@ class NNParser(object):
 
         return input_leaves, output_leaves
 
-    def get_subnet(self, block, model):
+    def get_subnet(self, block, model, target_shapes=None):
         # block: list of names
         block_set = set([l.name for l in block])
         inputs, outputs = self.get_leaves(block)
@@ -558,7 +598,7 @@ class NNParser(object):
 
         # define input_tensor
         in_tensors = {}
-        for in_ in inputs:
+        for i, in_ in enumerate(inputs):
             """
             if type(layers[in_].input) == list:
                 in_tensors[in_] = []
@@ -573,10 +613,15 @@ class NNParser(object):
                 else:
                     in_tensors[in_] = tf.keras.Input(shape=layers[in_].input.shape)
             """
+            shape = list(layers[in_].output.shape)
+            if target_shapes is not None:
+                shape[1] = target_shapes[i][1]
+                shape[2] = target_shapes[i][2]
             if layers[in_].output.shape[0] is None:
-                in_tensors[in_] = tf.keras.Input(shape=layers[in_].output.shape[1:], name=in_+"_inputlayer")
+                shape = shape[1:]
+                in_tensors[in_] = tf.keras.Input(shape=shape, name=in_+"_inputlayer")
             else:
-                in_tensors[in_] = tf.keras.Input(shape=layers[in_].output.shape, name=in_+"_inputlayer")
+                in_tensors[in_] = tf.keras.Input(shape=shape, name=in_+"_inputlayer")
 
         out_tensors = {}
 
@@ -622,7 +667,12 @@ class NNParser(object):
         inputs_ = [
             in_tensors[in_] for in_ in inputs
         ]
-        return keras.Model(inputs=inputs_, outputs=outputs_), inputs, outputs
+        output_model = keras.Model(inputs=inputs_, outputs=outputs_)
+
+        json_ = output_model.to_json()
+        output_model_ = tf.keras.models.model_from_json(json_)
+        output_model_.set_weights(output_model.get_weights())
+        return output_model_, inputs, outputs
 
 if __name__ == "__main__":
 

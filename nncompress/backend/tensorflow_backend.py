@@ -223,9 +223,10 @@ def decompose(model, targets, decomposed, custom_objects=None):
             ret.get_layer(name).set_weights((weight,))
     return ret, replace_mappings
 
-def add_prefix(model, prefix, custom_objects=None, val_check=None):
+def add_prefix(model, prefix, custom_objects=None, val_check=None, not_change_model_name=False):
     model_dict = json.loads(model.to_json())
-    model_dict["config"]["name"] = prefix + model_dict["config"]["name"]
+    if not not_change_model_name:
+        model_dict["config"]["name"] = prefix + model_dict["config"]["name"]
     for layer in model_dict["config"]["layers"]:
         layer["name"] = prefix + layer["name"]
         if "name" in layer["config"]:
