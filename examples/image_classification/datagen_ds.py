@@ -19,14 +19,25 @@ def get_rand_bbox(width, height, l):
     r_h = np.int(height * r_l)
     return r_x, r_y, r_l, r_w, r_h
 
+
+def center_crop_and_resize(image, image_size, crop_padding=32, interpolation='bicubic'):
+    shape = tf.shape(image)
+    h = shape[0]
+    w = shape[1]
+
+    padded_center_crop_size = tf.cast((image_size / (image_size + crop_padding)) * tf.cast(tf.math.minimum(h, w), tf.float32), tf.int32)
+    offset_height = ((h - padded_center_crop_size) + 1) // 2
+    offset_width = ((w - padded_center_crop_size) + 1) // 2
+
+    image_crop = image[offset_height:padded_center_crop_size + offset_height,
+                       offset_width:padded_center_crop_size + offset_width]
+
+    resized_image = tf.keras.preprocessing.image.smart_resize(image, [image_size, image_size], interpolation=interpolation)
+    return resized_image
+
 def cub_parse_fn(example_serialized):
-
     image = example_serialized["image"]
-    #image = tf.image.convert_image_dtype(image, dtype=tf.float32)
-
-    image = _aspect_preserving_resize(image, 256)
-    image = _central_crop([image], 224, 224)[0]
-
+    image = center_crop_and_resize(image, 224)
     return {"image": image, "label":example_serialized["label"]}
 
 
@@ -56,7 +67,7 @@ class DataGenerator(keras.utils.Sequence):
             self.ds = self._ds.shuffle(1024)
         else:
 
-            if self.dataset in ["caltech_birds2011", "oxford_iiit_pet", "cars196", "stanford_dogs", "imagenet2012"]:
+            if self.dataset in ["cifar100", "caltech_birds2011", "oxford_iiit_pet", "cars196", "stanford_dogs", "imagenet2012"]:
                 ds = ds.shuffle(1024)
                 ds = ds.apply(
                     tf.data.experimental.map_and_batch(
@@ -115,7 +126,7 @@ class DataGenerator(keras.utils.Sequence):
                     self.ds_mix = self._ds.shuffle(1024)
                 else:
 
-                    if self.dataset in ["caltech_birds2011", "oxford_iiit_pet", "cars196", "stanford_dogs", "imagenet2012"]:
+                    if self.dataset in ["cifar100", "caltech_birds2011", "oxford_iiit_pet", "cars196", "stanford_dogs", "imagenet2012"]:
                         ds = self._ds.shuffle(1024)
                         ds = ds.apply(
                             tf.data.experimental.map_and_batch(
@@ -134,7 +145,7 @@ class DataGenerator(keras.utils.Sequence):
                     self.ds_cut = self._ds.shuffle(1024)
                 else:
 
-                    if self.dataset in ["caltech_birds2011", "oxford_iiit_pet", "cars196", "stanford_dogs", "imagenet2012"]:
+                    if self.dataset in ["cifar100", "caltech_birds2011", "oxford_iiit_pet", "cars196", "stanford_dogs", "imagenet2012"]:
                         ds = self._ds.shuffle(1024)
                         ds = ds.apply(
                             tf.data.experimental.map_and_batch(

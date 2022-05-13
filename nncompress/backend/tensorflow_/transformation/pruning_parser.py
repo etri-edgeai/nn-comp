@@ -55,7 +55,7 @@ class PruningNNParser(NNParser):
     
     """
 
-    def __init__(self, model, basestr="", custom_objects=None, gate_class=None, namespace=None):
+    def __init__(self, model, basestr="", custom_objects=None, gate_class=None, namespace=None, allow_input_pruning=False):
         super(PruningNNParser, self).__init__(model, basestr=basestr, custom_objects=custom_objects, namespace=namespace)
         self._sharing_groups = []
         self._avoid_pruning = set()
@@ -64,15 +64,28 @@ class PruningNNParser(NNParser):
             self._gate_class = DifferentiableGate
         else:
             self._gate_class = gate_class
+        self._allow_input_pruning = allow_input_pruning
+
+        if self._custom_objects is None:
+            self._custom_objects = {}
+        self._custom_objects[self._gate_class.__name__] = self._gate_class
+        self._custom_objects["StopGradientLayer"] = StopGradientLayer
 
     def parse(self):
         super(PruningNNParser, self).parse()
 
+        tf.keras.utils.plot_model(self._model, "ttt.pdf")
         def extract(i):
+            if type(i) == frozenset and len(i) == 0:
+                return None
+
             if type(list(i)[0]) in [tuple, frozenset]:
                 result = []
                 for i_ in i:
-                    result.append(extract(i_))
+                    g = extract(i_)
+                    if g is None:
+                        continue
+                    result.append(g)
                 if type(i) in [tuple, list]:
                     return tuple(list(result))
                 else:
@@ -80,7 +93,13 @@ class PruningNNParser(NNParser):
             else:
                 return i[0]
 
-        affecting_layers = self.get_affecting_layers()
+        if self._allow_input_pruning:
+            augmented_transformers = set([
+                layer.name for layer in self._model.layers if layer.__class__ == tf.keras.layers.InputLayer
+            ])
+        else:
+            augmented_transformers = None
+        affecting_layers = self.get_affecting_layers(augmented_transformers)
 
         # Find sharing groups
         for layer, group  in affecting_layers.items():
@@ -96,7 +115,9 @@ class PruningNNParser(NNParser):
             else:
                 group_ = []
                 for i in group:
-                    group_.append(extract(i))
+                    g = extract(i)
+                    if g is not None and len(g) > 0:
+                        group_.append(g)
 
             candidates = []
             for target in self._sharing_groups:
@@ -118,12 +139,15 @@ class PruningNNParser(NNParser):
         # Find layers to avoid pruning
         self._avoid_pruning = self.get_last_transformers()
 
-    def get_affecting_layers(self):
+    def get_affecting_layers(self, augmented_transformers=None):
         """This function computes the affecting layers of each node.
 
         """
         if self._model_dict is None:
             super(PruningNNParser, self).parse()
+
+        if augmented_transformers is None:
+            augmented_transformers = set()
 
         affecting_layers = OrderedDict()
         for n in self._graph.nodes(data=True):
@@ -134,7 +158,8 @@ class PruningNNParser(NNParser):
             src = self._graph.nodes.data()[e[0]]
             dst = self._graph.nodes.data()[e[1]]
             level_change = e[2]["level_change"]
-            if get_handler(src["layer_dict"]["class_name"]).is_transformer(e[2]["tensor"]) and\
+            if (get_handler(src["layer_dict"]["class_name"]).is_transformer(e[2]["tensor"]) or
+                src["layer_dict"]["config"]["name"] in augmented_transformers) and\
                 not get_handler(dst["layer_dict"]["class_name"]).is_concat():
                 affecting_layers[(e[1], level_change[1])].append((e[0], level_change[0], e[2]["tensor"]))
 
@@ -154,7 +179,8 @@ class PruningNNParser(NNParser):
                         break
                 if len(temp) == 0:
                     temp = list(range(cnt))
-                if get_handler(src["layer_dict"]["class_name"]).is_transformer(e[2]["tensor"]):
+                if get_handler(src["layer_dict"]["class_name"]).is_transformer(e[2]["tensor"]) or\
+                    src["layer_dict"]["config"]["name"] in augmented_transformers:
                     temp[loc] = frozenset([(e[0], level_change[0], e[2]["tensor"])])
                 else:
                     temp[loc] = frozenset(affecting_layers[(e[0], level_change[0])])
@@ -169,6 +195,32 @@ class PruningNNParser(NNParser):
 
         self.traverse(neighbor_callbacks=[pass_])
         return affecting_layers
+
+
+    def get_first_transformers(self):
+        """This function returns the names of first transformers whose units/channels are related to
+            the network's input.
+
+        # Returns.
+            A set of first transformer names.
+        """
+        first = set()
+        def stop_(e, is_edge):
+            if is_edge:
+                dst = self._graph.nodes.data()[e[1]]
+                if get_handler(dst["layer_dict"]["class_name"]).is_transformer(0):
+                    first.add(e[1])
+                    return True
+            else:
+                curr, level = e
+                curr_data = self._graph.nodes.data()[curr]
+                if get_handler(curr_data["layer_dict"]["class_name"]).is_transformer(0):
+                    first.add(curr)
+                    return True
+            return False
+        self.traverse(stopping_condition=stop_, inbound=False)
+        return first
+
 
     def get_last_transformers(self):
         """This function returns the names of last transformers whose units/channels are related to
@@ -342,13 +394,14 @@ class PruningNNParser(NNParser):
                     src, dst, level_change, tensor = e[0], e[1], e[2]["level_change"], e[2]["tensor"]
                     if level_change[1] != level:
                         continue
-                    if (src, level_change[0]) in gate_mapping:
+                    if (src, level_change[0]) in gate_mapping and gate_mapping[(src, level_change[0])][0] is not None:
                         gates.append(gate_mapping[(src, level_change[0])])
                     else:
                         gates.append(None)
 
                 if len(gates) == 0:
                     return
+
                 continue_ = False
                 for gate in gates:
                     if gate is not None:
@@ -414,9 +467,7 @@ class PruningNNParser(NNParser):
         model_dict["config"]["name"] = self.get_id("gmodel")
 
         model_json = json.dumps(model_dict)
-        custom_objects = {self._gate_class.__name__:self._gate_class, "StopGradientLayer":StopGradientLayer}
-        custom_objects.update(self._custom_objects)
-        ret = tf.keras.models.model_from_json(model_json, custom_objects=custom_objects)
+        ret = tf.keras.models.model_from_json(model_json, custom_objects=self._custom_objects)
         for layer in self._model.layers:
             ret.get_layer(layer.name).set_weights(layer.get_weights())
 
@@ -442,7 +493,7 @@ class PruningNNParser(NNParser):
         self._t2g = None
         self._id_cnt = {}
 
-    def cut(self, gmodel, return_history=False):
+    def cut(self, gmodel, return_history=False, new_spatial_shape=None):
         """This function gets a compressed model from a model having gates
 
         # Arguments.
@@ -456,6 +507,11 @@ class PruningNNParser(NNParser):
         layers_dict = {}
         for layer_dict in model_dict["config"]["layers"]:
             layers_dict[layer_dict["config"]["name"]] = layer_dict
+
+            # TODO: 4D Input Assumption (batch, spatial1, spatial2, channel)
+            if layer_dict["class_name"] == "InputLayer" and new_spatial_shape is not None:
+                layer_dict["config"]["batch_input_shape"][1] = new_spatial_shape[layer_dict["config"]["name"]][1]
+                layer_dict["config"]["batch_input_shape"][2] = new_spatial_shape[layer_dict["config"]["name"]][2]
 
         gmodel_dict = json.loads(gmodel.to_json())
         glayers_dict = {}
@@ -496,10 +552,13 @@ class PruningNNParser(NNParser):
                     # TODO: better implementation for getting the channel of src?
                     gates.append(np.ones((self.get_nchannel(src),)) == 1.0) # Holder
 
-            if len(gates) == 0:
+            if len(gates) == 0 and (not (node_data["layer_dict"]["config"]["name"], 0) in gate_mapping):
                 return
 
-            input_gate = h.update_gate(gates, self._model.get_layer(n).input_shape)
+            if len(gates) == 0:
+                gates.append(gate_mapping[(node_data["layer_dict"]["config"]["name"], 0)])
+
+            input_gate = h.update_gate(gates, self._model.get_layer(n).get_input_shape_at(0))
             if input_gate is None:
                 input_gate = gates[0]
             if (n, level) not in gate_mapping and not h.is_transformer(0):
@@ -525,6 +584,86 @@ class PruningNNParser(NNParser):
         if return_history:
             ret = (ret, history)
         return ret
+
+    def get_group_topology(self, layer_names=None):
+
+        def inspect(g, dict_, sum_=0):
+            if type(g) == str:
+                if len(self._model.get_layer(g).get_weights()) == 0:
+                    return self._model.get_layer(g).output.shape[-1]
+                else:
+                    return self._model.get_layer(g).get_weights()[0].shape[-1] # channels
+            else:
+                if type(g) == tuple:
+                    backup_sum_ = sum_
+                    for g_ in g:
+                        step = inspect(g_, dict_, sum_)
+                        if g_ not in dict_:
+                            dict_[g_] = []
+                        dict_[g_].append((sum_, sum_+step))
+                        sum_ += step
+                    return sum_ - backup_sum_
+                elif type(g) in [frozenset, OrderedSet, list]:
+                    step = None
+                    for g_ in g:
+                        step = inspect(g_, dict_, sum_)
+                        if g_ not in dict_:
+                            dict_[g_] = []
+                        dict_[g_].append((sum_, sum_+step))
+                    return step
+
+        groups = self.get_sharing_groups()
+        group_struct = []
+        if layer_names is not None:
+            target_groups = []
+            for idx, layer_name in enumerate(layer_names):
+                for g in groups:
+                    if has_intersection(g, frozenset([layer_name])):
+                        dict_ = {}
+                        r = inspect(g, dict_, 0)
+                        group_struct.append(dict_)
+                        target_groups.append(g)
+                        break
+        else:
+            target_groups = groups
+            for g in groups:
+                dict_ = {}
+                r = inspect(g, dict_, 0)
+                group_struct.append(dict_)
+        return target_groups, group_struct
+   
+
+    def cut_by_masking(self, layer_names, masks):
+        gated_model, gm = p.inject(with_splits=True, with_mapping=True)
+
+        for layer in gated_model.layers:
+            if layer.__class__ == self._gate_class:
+                layer.gates.assign(np.ones((layer.ngates,)))
+
+        target_groups, gate_struct = self.get_group_topology(layer_names)
+        for idx, (g, dict_) in enumerate(zip(target_groups, gate_struct)):
+            items = []
+            for key, val in dict_.items():
+                if type(key) == str:
+                    val = sorted(val, key=lambda x:x[0])
+                    items.append((key, val))
+
+            mask = masks[idx]
+            for key, val in items:
+                if len(val) > 1:
+                    for v in val[1:]:
+                        mask[v[0]:v[1]] = mask[val[0][0]:val[0][1]]
+
+            for key, val in dict_.items():
+                if type(key) == str:
+                    gates = gated_model.get_layer(gm[(key,0)][0]["config"]["name"]).gates
+                    if gates.shape[0] == val[0][1] - val[0][0]:
+                        return False
+                    gates.assign(mask[val[0][0]:val[0][1]])
+
+        cutmodel = p.cut(gated_model)
+        return cutmodel
+
 
 def has_intersection(i, j):
     if not type(i) in [list, tuple, OrderedSet, frozenset]:

@@ -10,6 +10,21 @@ import cv2
 import efficientnet.tfkeras as efn
 from efficientnet.keras import center_crop_and_resize, preprocess_input
 
+def center_crop_and_resize(image, image_size, crop_padding=32, interpolation='bicubic'):
+    shape = tf.shape(image)
+    h = shape[0]
+    w = shape[1]
+
+    padded_center_crop_size = tf.cast((image_size / (image_size + crop_padding)) * tf.cast(tf.math.minimum(h, w), tf.float32), tf.int32)
+    offset_height = ((h - padded_center_crop_size) + 1) // 2
+    offset_width = ((w - padded_center_crop_size) + 1) // 2
+
+    image_crop = image[offset_height:padded_center_crop_size + offset_height,
+                       offset_width:padded_center_crop_size + offset_width]
+
+    resized_image = tf.keras.preprocessing.image.smart_resize(image, [image_size, image_size], interpolation=interpolation)
+    return resized_image
+
 height = 224
 width = 224
 input_shape = (height, width, 3) # network input
@@ -25,10 +40,7 @@ def get_name():
     return "efnet"
 
 def preprocess_func(img, shape):
-    img = img.astype(np.float32)/255.
-    img = cv2.resize(img, shape, interpolation=cv2.INTER_CUBIC)
-    #img = preprocess_input(img)
-    #img = tf.image.resize(img, (height, width))
+    img = preprocess_input(img)
     return img
 
 def get_model(dataset, n_classes=100):

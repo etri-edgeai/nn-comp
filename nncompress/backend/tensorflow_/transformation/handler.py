@@ -205,6 +205,18 @@ class ReshapeHandler(LayerHandler):
         layer_dict["config"]["target_shape"][-1] = val
         return
 
+class InputLayerHandler(LayerHandler):
+
+    @staticmethod
+    def is_transformer(tensor_idx):
+        return False
+
+    @staticmethod
+    def update_layer_schema(layer_dict, new_weights, input_gate, output_gate):
+        layer_dict["config"]["batch_input_shape"][-1] = int(np.sum(input_gate))
+        return
+
+
 LAYER_HANDLERS = {
     "Conv2D": Conv2DHandler,
     "Dense": DenseHandler,
@@ -214,5 +226,6 @@ LAYER_HANDLERS = {
     "Flatten": FlattenHandler,
     "Reshape": ReshapeHandler,
     "SeparableConv2D": SeparableConv2DHandler,
-    "WeightedSum":WeightedSumHandler
+    "WeightedSum":WeightedSumHandler,
+    "InputLayer":InputLayerHandler
 }

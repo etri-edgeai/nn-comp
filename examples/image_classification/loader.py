@@ -2,7 +2,7 @@
 def get_model_handler(model_name):
 
     if model_name == "efnet":
-        from models import efficientnet_keras as model_handler
+        from models import efficientnet as model_handler
     elif model_name == "efnet1":
         from models import efficientnet1_keras as model_handler
     elif model_name == "efnet2":
