@@ -223,7 +223,8 @@ class NNParser(object):
                     for inbound in flow:
                         if inbound[0] not in inputs and inbound[0] not in target_set: # outer
                             inputs.add(inbound[0])
-                            gates[t].append(flow_idx) # main flow from external sources.
+                            if flow_idx not in gates[t]:
+                                gates[t].append(flow_idx) # main flow from external sources.
 
             offsets = { r["name"]:len(r["inbound_nodes"]) for r in replacement }
             has_inbound = {r:len(replacement[n2i[r]]["inbound_nodes"]) > 0 for r in n2i}
@@ -289,7 +290,7 @@ class NNParser(object):
             model_dict["config"]["layers"].extend(replacement)
         return model_dict
 
-    def get_randomwalk(self, start, p=0.25, types=None):
+    def get_randomwalk(self, start, p=0.25, types=None, min_step=-1):
 
         trail = []
         def callback_(n, level):
@@ -300,6 +301,8 @@ class NNParser(object):
         def stop_cond(e, is_edge):
             if is_edge:
                 return False
+            if min_step != -1 and len(trail) >= min_step:
+                return True
             curr, level = e
             if types is not None:
                 if self._model.get_layer(curr).__class__ in types:
@@ -314,7 +317,7 @@ class NNParser(object):
         return trail
 
 
-    def get_joints(self, filter_=None, start=None):
+    def get_joints(self, filter_=None, start=None, min_step=-1):
 
         if len(self.torder) != self._graph.number_of_nodes():
             return
@@ -338,11 +341,18 @@ class NNParser(object):
                 if max_idx[0] < self.torder[dst] and (start is None or (start is not None and src != start)):
                     max_idx[0] = self.torder[dst]
 
+        def stop_cond(e, is_edge):
+            if is_edge:
+                return False
+            if min_step != -1 and len(trail) >= min_step:
+                return True
+            return False
+
         if start is not None:
             s = (start, self._graph.nodes(data=True)[start])
-            self.traverse(node_callbacks=[callback_], sources=[s])
+            self.traverse(node_callbacks=[callback_], sources=[s], stopping_condition=stop_cond)
         else:
-            self.traverse(node_callbacks=[callback_])
+            self.traverse(node_callbacks=[callback_], stopping_condition=stop_cond)
         return joints
 
     def first_common_descendant(self, names, joints, is_transforming=True):
