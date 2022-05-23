@@ -204,6 +204,7 @@ class NNParser(object):
         for layer_dict in model_dict["config"]["layers"]:
             layers_dict[layer_dict["config"]["name"]] = layer_dict
 
+        map_ = {}
         for (target, replacement), in_map, ex_map in zip(replace_mappings, in_maps, ex_maps):
             new_items = set([r["name"] for r in replacement])
             n2i = { r["name"]:i for i, r in enumerate(replacement) }
@@ -265,6 +266,7 @@ class NNParser(object):
                             r["inbound_nodes"].append(r_flow)
 
                 for t, r, t_tensor, r_tensor in ex_map[1]:
+                    map_ [t] = r
                     r_flow_idx = offsets[r] * (flow_idx + 1) - 1
                     nflow = len(self._graph.nodes.data()[t]["layer_dict"]["inbound_nodes"])
                     assert nflow % len(gates[target[0]]) == 0
@@ -288,6 +290,15 @@ class NNParser(object):
             for r in to_remove:
                 model_dict["config"]["layers"].remove(r)
             model_dict["config"]["layers"].extend(replacement)
+
+        # hard remedy
+        for layer in model_dict["config"]["layers"]:
+            for flow in layer["inbound_nodes"]:
+                for inbound in flow:
+                    if inbound[0] in map_:
+                        inbound[0] = map_[inbound[0]]
+
+
         return model_dict
 
     def get_randomwalk(self, start, p=0.25, types=None, min_step=-1):
