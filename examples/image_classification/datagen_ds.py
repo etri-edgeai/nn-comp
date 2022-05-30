@@ -35,9 +35,9 @@ def center_crop_and_resize(image, image_size, crop_padding=32, interpolation='bi
     resized_image = tf.keras.preprocessing.image.smart_resize(image, [image_size, image_size], interpolation=interpolation)
     return resized_image
 
-def cub_parse_fn(example_serialized):
+def cub_parse_fn(example_serialized, dim):
     image = example_serialized["image"]
-    image = center_crop_and_resize(image, 224)
+    image = center_crop_and_resize(image, dim)
     return {"image": image, "label":example_serialized["label"]}
 
 
@@ -57,7 +57,13 @@ class DataGenerator(keras.utils.Sequence):
         is_batched=False,
         preprocess_func=None,
         batch_preprocess_func=None,
+        parse_fn = None,
         augment_args=None):
+
+        if parse_fn is None:
+            self.parse_fn = lambda x:cub_parse_fn(x, dim[0])
+        else:
+            self.parse_fn = parse_fn
 
         #initializing the configuration of the generator
         self._ds = ds
@@ -71,7 +77,7 @@ class DataGenerator(keras.utils.Sequence):
                 ds = ds.shuffle(1024)
                 ds = ds.apply(
                     tf.data.experimental.map_and_batch(
-                        map_func=cub_parse_fn,
+                        map_func=self.parse_fn,
                         batch_size=batch_size))
                 ds = ds.prefetch(tf.data.experimental.AUTOTUNE)
                 self.ds = ds
@@ -130,7 +136,7 @@ class DataGenerator(keras.utils.Sequence):
                         ds = self._ds.shuffle(1024)
                         ds = ds.apply(
                             tf.data.experimental.map_and_batch(
-                                map_func=cub_parse_fn,
+                                map_func=self.parse_fn,
                                 batch_size=self.batch_size))
                         ds = ds.prefetch(tf.data.experimental.AUTOTUNE)
                         self.ds_mix = ds
@@ -149,7 +155,7 @@ class DataGenerator(keras.utils.Sequence):
                         ds = self._ds.shuffle(1024)
                         ds = ds.apply(
                             tf.data.experimental.map_and_batch(
-                                map_func=cub_parse_fn,
+                                map_func=self.parse_fn,
                                 batch_size=self.batch_size))
                         ds = ds.prefetch(tf.data.experimental.AUTOTUNE)
                         self.ds_cut= ds
