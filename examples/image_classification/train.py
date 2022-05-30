@@ -29,6 +29,9 @@ def load_data(dataset, model_handler, training_augment=True, batch_size=-1, n_cl
     augment = True
     reg_augment = True
 
+    if hasattr(model_handler, "parse_fn"):
+        parse_fn = model_handler.parse_fn
+
     if dataset == "imagenet":
         import sys
         sys.path.insert(0, "/home/jongryul/work/keras_imagenet")
@@ -68,7 +71,8 @@ def load_data(dataset, model_handler, training_augment=True, batch_size=-1, n_cl
             n_examples=train_examples,
             preprocess_func=preprocess_func,
             is_batched=is_batched,
-            batch_preprocess_func=batch_pf)
+            batch_preprocess_func=batch_pf,
+            parse_fn=parse_fn)
 
         valid_data_generator = DataGenerator(
             ds_val,
@@ -80,7 +84,8 @@ def load_data(dataset, model_handler, training_augment=True, batch_size=-1, n_cl
             n_examples=val_examples,
             preprocess_func=preprocess_func,
             is_batched=is_batched,
-            batch_preprocess_func=batch_pf)
+            batch_preprocess_func=batch_pf,
+            parse_fn=parse_fn)
 
         test_data_generator = DataGenerator(
             ds_val,
@@ -92,7 +97,8 @@ def load_data(dataset, model_handler, training_augment=True, batch_size=-1, n_cl
             n_examples=val_examples,
             preprocess_func=preprocess_func,
             is_batched=is_batched,
-            batch_preprocess_func=batch_pf)
+            batch_preprocess_func=batch_pf,
+            parse_fn=parse_fn)
 
     return train_data_generator, valid_data_generator, test_data_generator
 
