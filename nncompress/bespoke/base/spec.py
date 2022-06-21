@@ -1,1 +1,0 @@
-""" Spec: Scale and Task """
