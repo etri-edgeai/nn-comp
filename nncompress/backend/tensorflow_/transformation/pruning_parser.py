@@ -27,8 +27,14 @@ class StopGradientLayer(tf.keras.layers.Layer):
 
     def get_config(self):
         return {
-            "name":self.name
+            "name":self.name,
         }
+
+    @classmethod
+    def from_config(cls, config):
+        if "dtype" in config:
+            config.pop("dtype")
+        return cls(**config)
 
 class PruningNNParser(NNParser):
     """NNParser is a tool for enabling differentiable pruning.

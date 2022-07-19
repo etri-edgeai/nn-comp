@@ -46,6 +46,8 @@ def norm(x, p):
 
 def cmul(data, mask):
     # N W H C
+    if data.dtype != mask.dtype:
+        mask = tf.cast(mask, data.dtype)
     return data * mask
 
 def concat(x, y, dim=0):

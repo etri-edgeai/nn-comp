@@ -1,0 +1,23 @@
+dataset: "cifar100"
+num_classes: 100
+
+use_amp: true
+lr_name: "exponential"
+initial_lr: 0.00005
+decay_epochs: 2.4
+decay_rate: 0.97
+warmup_epochs: 5
+opt_name: "adam"
+decay: 0.9
+epsilon: 0.1e-07
+momentum: 0.9
+moving_average_decay: 0.0
+weight_decay: 0.000005
+nesterov: false
+beta_1: 0.9 
+beta_2: 0.999
+grad_clip_norm: 0
+grad_accum_steps: 1
+hvd_fp16_compression: true
+intratrain_eval_using_ema: true
+label_smoothing: 0.1 
