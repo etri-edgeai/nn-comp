@@ -263,12 +263,12 @@ class AverageModelCheckpoint(tf.keras.callbacks.ModelCheckpoint):
     self.ema_opt = optimizer_factory.fetch_optimizer(model, optimizer_factory.MovingAverage)
     return  super().set_model(model)
 
-  def _save_model(self, epoch, logs):
+  def _save_model(self, epoch, batch, logs):
     assert isinstance(self.ema_opt, optimizer_factory.MovingAverage)
 
     if self.update_weights:
       self.ema_opt.assign_average_vars(self.model.variables)
-      return super()._save_model(epoch, logs)
+      return super()._save_model(epoch, batch, logs)
     else:
       # Note: `model.get_weights()` gives us the weights (non-ref)
       # whereas `model.variables` returns references to the variables.
@@ -276,11 +276,9 @@ class AverageModelCheckpoint(tf.keras.callbacks.ModelCheckpoint):
       self.ema_opt.assign_average_vars(self.model.variables)
       # result is currently None, since `super._save_model` doesn't
       # return anything, but this may change in the future.
-      result = super()._save_model(epoch, logs)
+      result = super()._save_model(epoch, batch, logs)
       self.model.set_weights(non_avg_weights)
       return result
-
-
 
 class BatchTimestamp(object):
   """A structure to store batch time stamp."""

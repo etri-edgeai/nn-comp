@@ -56,9 +56,10 @@ from loader import get_model_handler
 
 from train import load_dataset, train, iteration_based_train
 from prep import add_augmentation, change_dtype
+from utils import optimizer_factory
 
 custom_object_scope = {
-    "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer
+    "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer, "HvdMovingAverage":optimizer_factory.HvdMovingAverage
 }
 
 def get_total_channels(groups, model):
@@ -81,6 +82,7 @@ def model_path_based_load(dataset, model_path, model_handler):
         else:
             model = tf.keras.models.load_model(model_path)
 
+    """
     if "efnet" in model_handler.get_name() and dataset != "imagenet2012":
         mean, var = model_handler.fix_mean_variance()
 
@@ -91,6 +93,7 @@ def model_path_based_load(dataset, model_path, model_handler):
         else:
             model.layers[0].get_layer("normalization").mean = mean
             model.layers[0].get_layer("normalization").variance = var
+    """
 
     return model
 
@@ -565,10 +568,9 @@ def run():
     if args.mode == "test":
 
         model = model_path_based_load(args.dataset, args.model_path, model_handler)
-        print(model.summary())
         model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
         tf.keras.utils.plot_model(model, "tested_model.pdf", expand_nested=True)
-        model_handler.compile(model, run_eagerly=True)
+        model_handler.compile(model, run_eagerly=False)
         (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
         print(model.evaluate(test_data_gen, verbose=1)[1])
 
@@ -584,7 +586,7 @@ def run():
             mixed_precision.set_global_policy('mixed_float16')
             model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=None)
         model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
-        train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir, conf=config)
+        train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=False, n_classes=n_classes, save_dir=save_dir, conf=config)
 
     elif args.mode == "hpo": # train
         model = model_handler.get_model(dataset, n_classes=n_classes)
