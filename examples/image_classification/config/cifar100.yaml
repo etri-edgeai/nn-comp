@@ -3,11 +3,11 @@ num_classes: 100
 
 use_amp: true
 lr_name: "cosine_restart"
-initial_lr: 0.00001
-t_mul: 0.3
-m_mul: 0.5
-alpha: 1.0e-6
-decay_epochs: 0.3
+initial_lr: 0.0001
+t_mul: 2.0
+m_mul: 1.0
+alpha: 1.0e-7
+decay_epochs: 10.0
 decay_rate: 0.97
 warmup_epochs: 5
 opt_name: "adam"

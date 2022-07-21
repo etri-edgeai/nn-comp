@@ -337,7 +337,7 @@ def preprocess_for_eval(
   #images = tf.keras.preprocessing.image.smart_resize(images, [256, 256], interpolation='bicubic')
   #images = _central_crop([images], 224, 224)[0]
 
-  images = center_crop_and_resize(images, 224)
+  images = center_crop_and_resize(images, image_size)
 
   #if mean_subtract:
   #  images = mean_image_subtraction(image_bytes=images, means=MEAN_RGB)
@@ -508,7 +508,7 @@ def preprocess_for_train(images: tf.Tensor,
   #images = tf.keras.preprocessing.image.smart_resize(images, [256, 256], interpolation='bicubic')
   #images = _central_crop([images], 224, 224)[0]
 
-  images = center_crop_and_resize(images, 224)
+  images = center_crop_and_resize(images, image_size)
 
   if mean_subtract:
     images = mean_image_subtraction(image_bytes=images, means=MEAN_RGB)

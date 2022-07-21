@@ -64,6 +64,22 @@ def get_custom_objects():
 
 def add_augmentation(model, image_size, train_batch_size=32, do_mixup=False, do_cutmix=False, custom_objects=None):
 
+    found = False
+    for l in model.layers:
+        if l.name == "mixup_weight":
+            found = True
+            break
+    if found:
+        return model
+
+    if type(model) == keras.Sequential:
+        input_layer = keras.layers.Input(batch_shape=model.layers[0].input_shape, name="seq_input")
+        prev_layer = input_layer
+        for layer in model.layers:
+            layer._inbound_nodes = []
+            prev_layer = layer(prev_layer)
+        model = keras.models.Model([input_layer], [prev_layer])
+
     def cond_mixing(args):
       images,mixup_weights,cutmix_masks,is_tr_split = args
       return tf.cond(tf.keras.backend.equal(is_tr_split[0],0), 
