@@ -31,6 +31,7 @@ def load_data_nvidia(dataset, model_handler, sampling_ratio=1.0, training_augmen
         batch_size = model_handler.get_batch_size(dataset)
 
     augmenter = "autoaugment"
+    augmenter = None
     augmenter_params = {}
     #augmenter_params["cutout_const"] = None
     #augmenter_params["translate_const"] = None
@@ -176,7 +177,10 @@ def train(dataset, model, model_name, model_handler, run_eagerly=False, callback
             'boundaries': None,
             'multipliers': None,
             'scale_by_batch_size': 1./float(batch_size),
-            'staircase': True
+            'staircase': True,
+            't_mul': conf["t_mul"],
+            'm_mul': conf["m_mul"],
+            'alpha': conf['alpha']
         }
 
         learning_rate = optimizer_factory.build_learning_rate(
@@ -218,7 +222,6 @@ def train(dataset, model, model_name, model_handler, run_eagerly=False, callback
                 custom_callbacks.MovingAverageCallback(intratrain_eval_using_ema=conf["intratrain_eval_using_ema"]))
 
     else:
-        # model was already compiled
         pass
 
     print(model.count_params())

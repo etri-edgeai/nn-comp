@@ -2,10 +2,12 @@ dataset: "cifar100"
 num_classes: 100
 
 use_amp: true
-lr_name: "exponential"
-#initial_lr: 0.00001
-initial_lr: 0.001
-decay_epochs: 2.4
+lr_name: "cosine_restart"
+initial_lr: 0.00001
+t_mul: 0.3
+m_mul: 0.5
+alpha: 1.0e-6
+decay_epochs: 0.3
 decay_rate: 0.97
 warmup_epochs: 5
 opt_name: "adam"
