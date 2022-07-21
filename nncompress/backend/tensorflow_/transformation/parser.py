@@ -469,7 +469,7 @@ class NNParser(object):
         if sync and not inbound:
             dependency = {
                 n[0] : [
-                    [0 for _ in range(len(flow))]
+                    [0 for _ in range(len(flow))] if type(flow[0]) == list else [0]
                     for flow in n[1]["layer_dict"]["inbound_nodes"]
                 ]
                 for n in self._graph.nodes(data=True) if "inbound_nodes" in n[1]["layer_dict"]
@@ -486,7 +486,6 @@ class NNParser(object):
                 break
 
             neighbors = self._graph.in_edges(curr, data=True) if inbound else self._graph.out_edges(curr, data=True)
-
             for e in neighbors:
                 src, dst, level_change, inbound_idx = e[0], e[1], e[2]["level_change"], e[2]["inbound_idx"]
                 if neighbor_callbacks is not None:
