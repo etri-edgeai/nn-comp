@@ -346,6 +346,15 @@ def build_learning_rate(params: Dict[Text, Any],
         decay_steps=decay_steps,
         alpha=0.0
     )
+  elif decay_type == 'cosine_restart':
+    decay_steps = (max_epochs - params['warmup_epochs']) * train_steps
+    lr = tf.keras.experimental.CosineDecayRestarts(
+        initial_learning_rate=base_lr,
+        first_decay_steps=decay_steps,
+        t_mul=params["t_mul"],
+        m_mul=params["m_mul"],
+        alpha=params["alpha"]
+    )
   elif decay_type == 'linearcosine':
     decay_steps = (max_epochs - params['warmup_epochs']) * train_steps
     lr = tf.keras.experimental.NoisyLinearCosineDecay(

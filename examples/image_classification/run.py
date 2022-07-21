@@ -1,23 +1,26 @@
 # coding: utf-8
 
 from __future__ import print_function
+
+import os
 from silence_tensorflow import silence_tensorflow
 silence_tensorflow()
 
 import horovod.tensorflow.keras as hvd
-hvd.init()
+if "NO_HOROVOD" not in os.environ:
+    hvd.init()
 
 import tensorflow as tf
-physical_devices = tf.config.list_physical_devices('GPU')
-if len(physical_devices) > 0:
-    for i, p in enumerate(physical_devices):
-        tf.config.experimental.set_memory_growth(
-            physical_devices[i], True
-            )
-    tf.config.set_visible_devices(physical_devices[hvd.local_rank()], 'GPU')
+if "NO_HOROVOD" not in os.environ:
+    physical_devices = tf.config.list_physical_devices('GPU')
+    if len(physical_devices) > 0:
+        for i, p in enumerate(physical_devices):
+            tf.config.experimental.set_memory_growth(
+                physical_devices[i], True
+                )
+        tf.config.set_visible_devices(physical_devices[hvd.local_rank()], 'GPU')
 
 tf.random.set_seed(2)
-import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
@@ -33,6 +36,7 @@ import math
 import time
 import logging
 import yaml
+import copy
 
 import numpy as np
 from tensorflow import keras
@@ -505,7 +509,7 @@ def run():
     import json
     with open("args.log", "w") as file_:
         json.dump(vars(args), file_)
-        if hvd.rank() == 0:
+        if "NO_HOROVOD" not in os.environ or hvd.rank() == 0:
             print(vars(args))
 
     if args.config is not None:
@@ -517,7 +521,7 @@ def run():
 
         for key in config:
             if hasattr(args, key):
-                if hvd.rank() == 0:
+                if "NO_HOROVOD" not in os.environ or hvd.rank() == 0:
                     print("%s is loaded as %s." % (key, config[key]))
                 if config[key] in ["true", "false"]: # boolean handling.
                     config[key] = config[key] == "true"
@@ -581,6 +585,40 @@ def run():
             model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=None)
         model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
         train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir, conf=config)
+
+    elif args.mode == "hpo": # train
+        model = model_handler.get_model(dataset, n_classes=n_classes)
+        if config["use_amp"]:
+            tf.keras.backend.set_floatx("float16")
+            from tensorflow.keras import mixed_precision
+            mixed_precision.set_global_policy('mixed_float16')
+            model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=None)
+        model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
+
+        from ray import tune
+        from ray.tune.suggest.bayesopt import BayesOptSearch
+        from ray.tune.suggest import ConcurrencyLimiter
+
+        algo = BayesOptSearch()
+        algo = ConcurrencyLimiter(algo, max_concurrent=4)
+
+        def training_function(config_):
+            hvd.init()
+            if "batch_size" in config_:
+                model_handler.batch_size = config_["batch_size"]
+            train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir, conf=config_)
+            tune.report(test=1, rank=hvd.rank())
+
+        trainable = DistributedTrainableCreator(
+                training_function, num_slots=4, use_gpu=True)
+
+        config_ray = copy.deepcopy(config)
+        config_ray["initial_lr"] = tune.uniform(0.0001, 0.1)
+        config_ray["decay_epcohs"] = tune.uniform(1.0, 4.0)
+        config_ray["batch_size"] = tune.randint(2, 32)
+
+        results = tune.run(training_function, config=config, name="horovod", metric="mean_loss", mode="min", search_alg=algo)
+        print(results.best_config)
 
     elif args.mode == "finetune": # train
         save_dir = save_dir+"/finetuned_models"
