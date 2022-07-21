@@ -1,20 +1,38 @@
 # coding: utf-8
 
 from __future__ import print_function
+from silence_tensorflow import silence_tensorflow
+silence_tensorflow()
+
+import horovod.tensorflow.keras as hvd
+hvd.init()
+
 import tensorflow as tf
+physical_devices = tf.config.list_physical_devices('GPU')
+if len(physical_devices) > 0:
+    for i, p in enumerate(physical_devices):
+        tf.config.experimental.set_memory_growth(
+            physical_devices[i], True
+            )
+    tf.config.set_visible_devices(physical_devices[hvd.local_rank()], 'GPU')
+
 tf.random.set_seed(2)
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+
 import random
 random.seed(1234)
 import numpy as np
 np.random.seed(1234)
 import imgaug as ia
 ia.seed(1234)
-import os
 import argparse
 import cv2
 import math
 import time
 import logging
+import yaml
 
 import numpy as np
 from tensorflow import keras
@@ -32,8 +50,12 @@ from l2 import apply_l2prune
 from group_fisher import make_group_fisher, add_gates, prune_step, compute_positions, get_num_all_channels
 from loader import get_model_handler
 
-from train import load_data, train, iteration_based_train
-from prep import add_augmentation
+from train import load_dataset, train, iteration_based_train
+from prep import add_augmentation, change_dtype
+
+custom_object_scope = {
+    "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer
+}
 
 def get_total_channels(groups, model):
     total = 0
@@ -43,9 +65,6 @@ def get_total_channels(groups, model):
     return total
 
 def model_path_based_load(dataset, model_path, model_handler):
-    custom_object_scope = {
-        "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer
-    }
     if model_handler.get_custom_objects() is not None:
         for key, val in model_handler.get_custom_objects().items():
             custom_object_scope[key] = val
@@ -133,7 +152,7 @@ def prune(
         with open(model_handler.get_name()+"_"+postfix+".log", "w") as file_:
             json.dump(backup_args, file_)
 
-    _, _, test_data_gen = load_data(dataset, model_handler, batch_size=model_handler.batch_size, n_classes=n_classes)
+    (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, batch_size=model_handler.batch_size, n_classes=n_classes)
     def validate(model_):
         model_handler.compile(model_, run_eagerly=True)
         if dataset == "imagenet":
@@ -145,7 +164,7 @@ def prune(
         gmodel, copied_model, l2g, ordered_groups, torder, parser, _ = add_gates(model, custom_objects=model_handler.get_custom_objects())
         backup = model_handler.batch_size
         model_handler.batch_size = 256
-        train_data_generator_, _, _ = load_data(dataset, model_handler, training_augment=False, n_classes=n_classes)
+        (train_data_generator_, _, _), (_, _) = load_dataset(dataset, model_handler, training_augment=False, n_classes=n_classes)
         model_handler.batch_size = backup
         apply_curl(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio, save_dir+"/pruning_steps", model_handler.get_name()+postfix, save_steps=save_steps)
 
@@ -154,7 +173,7 @@ def prune(
         gmodel, copied_model, l2g, ordered_groups, torder, parser, _ = add_gates(model, custom_objects=model_handler.get_custom_objects())
         backup = model_handler.batch_size
         model_handler.batch_size = 256
-        train_data_generator_, _, _ = load_data(dataset, model_handler, training_augment=False, n_classes=n_classes)
+        (train_data_generator_, _, _), (_, _)  = load_dataset(dataset, model_handler, training_augment=False, n_classes=n_classes)
         model_handler.batch_size = backup
         gf_model= model_path_based_load(dataset, model_path2, model_handler)
         apply_hrank(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio, gf_model)
@@ -164,7 +183,7 @@ def prune(
         gmodel, copied_model, l2g, ordered_groups, torder, parser, _ = add_gates(model, custom_objects=model_handler.get_custom_objects())
         backup = model_handler.batch_size
         model_handler.batch_size = 256
-        train_data_generator_, _, _ = load_data(dataset, model_handler, training_augment=False, n_classes=n_classes)
+        (train_data_generator_, _, _), (_, _) = load_dataset(dataset, model_handler, training_augment=False, n_classes=n_classes)
         model_handler.batch_size = backup
         gf_model= model_path_based_load(dataset, model_path2, model_handler)
         apply_l2prune(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio, gf_model)
@@ -486,7 +505,8 @@ def run():
     import json
     with open("args.log", "w") as file_:
         json.dump(vars(args), file_)
-        print(vars(args))
+        if hvd.rank() == 0:
+            print(vars(args))
 
     if args.config is not None:
         with open(args.config, 'r') as stream:
@@ -497,12 +517,11 @@ def run():
 
         for key in config:
             if hasattr(args, key):
-                print("%s is loaded as %s." % (key, config[key]))
+                if hvd.rank() == 0:
+                    print("%s is loaded as %s." % (key, config[key]))
                 if config[key] in ["true", "false"]: # boolean handling.
                     config[key] = config[key] == "true"
                 setattr(args, key, config[key])
-            else:
-                raise NotImplementedError("Option Error. Check your config.")
 
     if args.label_only:
         args.with_label = True
@@ -527,8 +546,6 @@ def run():
         n_classes = 100
     elif args.dataset == "caltech_birds2011":
         n_classes = 200
-    elif args.dataset == "imagenet":
-        n_classes = 1000
     elif args.dataset == "imagenet2012":
         n_classes = 1000
     elif args.dataset == "oxford_iiit_pet":
@@ -545,9 +562,10 @@ def run():
 
         model = model_path_based_load(args.dataset, args.model_path, model_handler)
         print(model.summary())
+        model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
         tf.keras.utils.plot_model(model, "tested_model.pdf", expand_nested=True)
         model_handler.compile(model, run_eagerly=True)
-        _, _, test_data_gen = load_data(dataset, model_handler, n_classes=n_classes)
+        (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
         print(model.evaluate(test_data_gen, verbose=1)[1])
 
         from keras_flops import get_flops
@@ -560,9 +578,9 @@ def run():
             tf.keras.backend.set_floatx("float16")
             from tensorflow.keras import mixed_precision
             mixed_precision.set_global_policy('mixed_float16')
-            model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_objects, distill_set=distill_set)
-        model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_objects)
-        train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir)
+            model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=None)
+        model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
+        train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir, conf=config)
 
     elif args.mode == "finetune": # train
         save_dir = save_dir+"/finetuned_models"
@@ -585,19 +603,19 @@ def run():
             tf.keras.backend.set_floatx("float16")
             from tensorflow.keras import mixed_precision
             mixed_precision.set_global_policy('mixed_float16')
-            model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_objects, distill_set=distill_set)
+            model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=distill_set)
 
         if args.model_path2 is not None:
             teacher = model_path_based_load(args.dataset, args.model_path2, model_handler)
             if config["use_amp"]:
-                teacher = change_dtype(teacher, mixed_precision.global_policy(), custom_objects=custom_objects, distill_set=distill_set)
+                teacher = change_dtype(teacher, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=distill_set)
 
             # position_mode must be str
             import json
             with open(args.position_mode, "r") as f: 
                 positions = json.load(f)["data"]
 
-            model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_objects)
+            model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
             model = make_distiller(model, teacher, positions=positions, scale=0.1, model_builder=model_builder)
 
         train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir, conf=config, teacher=teacher)
@@ -614,7 +632,7 @@ def run():
             model_path = args.model_path
 
         model = model_path_based_load(args.dataset, model_path, model_handler)
-        model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_objects)
+        model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
 
         prune(
             dataset,

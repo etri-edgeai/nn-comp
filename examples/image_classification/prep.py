@@ -1,6 +1,7 @@
 import json
 
 import tensorflow as tf
+from tensorflow import keras
 
 from dataloader.dataset_factory import *
 from models.custom import GAModel
@@ -34,6 +35,15 @@ def change_dtype_(model_dict, policy, distill_set=None):
 
 
 def change_dtype(model_, policy, distill_set=None, custom_objects=None):
+
+    if type(model_) == keras.Sequential:
+        input_layer = keras.layers.Input(batch_shape=model_.layers[0].input_shape, name="seq_input")
+        prev_layer = input_layer
+        for layer in model_.layers:
+            layer._inbound_nodes = []
+            prev_layer = layer(prev_layer)
+        model_ = keras.models.Model([input_layer], [prev_layer])
+
     model_backup = model_
     model_dict = json.loads(model_.to_json())
     change_dtype_(model_dict, policy, distill_set=distill_set)

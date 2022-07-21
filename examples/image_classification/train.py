@@ -7,12 +7,11 @@ from tensorflow import keras
 import tensorflow as tf
 import tensorflow_datasets as tfds
 
-from datagen_ds import DataGenerator
-
 from dataloader import dataset_factory
 from utils import callbacks as custom_callbacks
 from utils import optimizer_factory
 
+import horovod.tensorflow.keras as hvd
 
 # constants
 epochs = 50
@@ -122,7 +121,7 @@ def train(dataset, model, model_name, model_handler, run_eagerly=False, callback
     batch_size = model_handler.get_batch_size(dataset)
 
     if type(dataset) == str:
-        data_gen, iters_info = load_dataset(dataset, model_handler, sampling_ratio=sampling_ratio, training_augment=augment, n_classes=n_classes)
+        data_gen, iters_info = load_dataset(dataset, model_handler, sampling_ratio=1.0, training_augment=augment, n_classes=n_classes)
     else:
         data_gen, iters_info = dataset
     train_data_generator, valid_data_generator, test_data_generator = data_gen
@@ -190,6 +189,7 @@ def train(dataset, model, model_name, model_handler, run_eagerly=False, callback
             'name': conf["opt_name"],
             'decay': conf["decay"],
             'epsilon': conf["epsilon"],
+            'lookahead': conf["lookahead"],
             'momentum': conf["momentum"],
             'moving_average_decay': conf["moving_average_decay"],
             'nesterov': conf["nesterov"],
@@ -210,7 +210,8 @@ def train(dataset, model, model_name, model_handler, run_eagerly=False, callback
         elif conf["grad_accum_steps"] == 1:
             optimizer = hvd.DistributedOptimizer(optimizer, compression=hvd.Compression.fp16 if conf["hvd_fp16_compression"] else hvd.Compression.none)
 
-        model.compile(optimizer=optimizer, loss="categorical_crossentropy", metrics=['accuracy'], run_eagerly=False, experimental_run_tf_function=False)
+        loss = tf.keras.losses.CategoricalCrossentropy(label_smoothing=conf["label_smoothing"])
+        model.compile(optimizer=optimizer, loss=loss, metrics=['accuracy'], run_eagerly=False, experimental_run_tf_function=False)
 
         if conf["moving_average_decay"] > 0:
             callbacks.append(
@@ -224,15 +225,15 @@ def train(dataset, model, model_name, model_handler, run_eagerly=False, callback
 
     if exclude_val:
         model_history = model.fit(train_data_generator,
-                                        callbacks=callbacks+callbacks_,
-                                        verbose=1,
+                                        callbacks=callbacks,
+                                        verbose=1 if hvd.rank() == 0 else 0,
                                         epochs=epochs_,
                                         steps_per_epoch=iters)
     else:
         model_history = model.fit(train_data_generator,
                                         validation_data=valid_data_generator,
-                                        callbacks=callbacks+callbacks_,
-                                        verbose=1,
+                                        callbacks=callbacks,
+                                        verbose=1 if hvd.rank() == 0 else 0,
                                         epochs=epochs_,
                                         steps_per_epoch=iters)
 

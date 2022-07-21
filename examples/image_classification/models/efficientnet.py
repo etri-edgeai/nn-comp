@@ -1,4 +1,5 @@
 
+import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import Callback, EarlyStopping, ReduceLROnPlateau
@@ -6,9 +7,19 @@ from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import Dropout, Dense, GlobalAveragePooling2D, Flatten, BatchNormalization
 import numpy as np
 import cv2
+import horovod.tensorflow.keras as hvd
 
-import efficientnet.tfkeras as efn
-from efficientnet.keras import center_crop_and_resize, preprocess_input
+USE_EFNET = True
+if USE_EFNET:
+    from efficientnet.tfkeras import EfficientNetB0
+    from efficientnet.tfkeras import preprocess_input
+else:
+    from tensorflow.keras.applications.efficientnet import EfficientNetB0, preprocess_input
+
+height = 224
+width = 224
+input_shape = (height, width, 3) # network input
+batch_size = 16
 
 def center_crop_and_resize(image, image_size, crop_padding=32, interpolation='bicubic'):
     shape = tf.shape(image)
@@ -25,11 +36,6 @@ def center_crop_and_resize(image, image_size, crop_padding=32, interpolation='bi
     resized_image = tf.keras.preprocessing.image.smart_resize(image, [image_size, image_size], interpolation=interpolation)
     return resized_image
 
-height = 224
-width = 224
-input_shape = (height, width, 3) # network input
-batch_size = 32
-
 def get_shape(dataset):
     return (height, width, 3) # network input
 
@@ -40,15 +46,22 @@ def get_name():
     return "efnet"
 
 def preprocess_func(img, shape):
-    img = preprocess_input(img)
+
+    img = tf.keras.applications.imagenet_utils.preprocess_input(
+        img, data_format=None, mode='torch'
+        )
+
+    #img = preprocess_input(img)
     return img
 
 def get_model(dataset, n_classes=100):
-    if dataset == "imagenet":
-        efnb0 = efn.EfficientNetB0(weights='imagenet', include_top=True, input_shape=input_shape, classes=n_classes)
-        return efnb0
+    if dataset == "imagenet2012":
+        model = EfficientNetB0(weights='imagenet')
+        return model
     else:
-        efnb0 = efn.EfficientNetB0(weights='imagenet', include_top=False, input_shape=input_shape, classes=n_classes)
+        efnb0 = EfficientNetB0(
+            include_top=False, weights='imagenet', input_shape=input_shape, classes=n_classes)
+
         model = Sequential()
         model.add(efnb0)
         model.add(GlobalAveragePooling2D())
@@ -59,19 +72,28 @@ def get_model(dataset, n_classes=100):
         model.add(Dense(n_classes, activation='softmax'))
         return model
 
-def get_optimizer():
-    return Adam(lr=0.0001)
+def get_optimizer(mode=0):
+    if mode == 0:
+        return Adam(lr=0.0001)
+    elif mode == 1:
+        return Adam(lr=0.00001)
 
-def compile(model, run_eagerly=False):
-    optimizer = Adam(lr=0.0001)
-    model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['accuracy'], run_eagerly=run_eagerly)
+
+def compile(model, run_eagerly=True, lr=None, post_opt=None):
+
+    if lr is None:
+        lr = 0.001
+    optimizer = Adam(lr=lr)
+    if post_opt is not None:
+        optimizer = post_opt(optimizer)
+    model.compile(optimizer=optimizer, loss="categorical_crossentropy", metrics=['accuracy'], run_eagerly=run_eagerly)
 
 def get_callbacks(nsteps=0):
     #early stopping to monitor the validation loss and avoid overfitting
     #early_stop = EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=10, restore_best_weights=True)
 
     #reducing learning rate on plateau
-    rlrop = ReduceLROnPlateau(monitor='val_loss', mode='min', patience= 5, factor= 0.5, min_lr= 1e-6, verbose=1)
+    rlrop = ReduceLROnPlateau(monitor='val_loss', mode='min', patience= 3, factor= 0.5, min_lr= 1e-6, verbose=1)
     return [rlrop]
 
 def get_custom_objects():
@@ -82,3 +104,18 @@ def get_train_epochs(finetune=False):
         return 50
     else:
         return 100
+
+def fix_mean_variance():
+    return tf.convert_to_tensor([[[[0.485, 0.456, 0.406]]]]), tf.convert_to_tensor([[[[0.229, 0.224, 0.225]]]])
+
+def get_heuristic_positions():
+
+    return [
+        "block1a_project_bn",
+        "block2b_add",
+        "block3b_add",
+        "block4c_add",
+        "block5c_add",
+        "block6d_add",
+        "top_activation"
+    ]
