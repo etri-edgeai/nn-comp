@@ -13,6 +13,8 @@ from utils import optimizer_factory
 
 import horovod.tensorflow.keras as hvd
 
+from models.loss import BespokeTaskLoss, accuracy
+
 # constants
 epochs = 50
 
@@ -187,8 +189,16 @@ def train(dataset, model, model_name, model_handler, run_eagerly=False, callback
         elif conf["grad_accum_steps"] == 1:
             optimizer = hvd.DistributedOptimizer(optimizer, compression=hvd.Compression.fp16 if conf["hvd_fp16_compression"] else hvd.Compression.none)
 
-        loss = tf.keras.losses.CategoricalCrossentropy(label_smoothing=conf["label_smoothing"])
-        model.compile(optimizer=optimizer, loss=loss, metrics=['accuracy'], run_eagerly=False, experimental_run_tf_function=False)
+
+        # compile
+        if "distillation" in conf["mode"]:
+            mute = "free" in conf["mode"]
+            loss = {model.output[0].name.split("/")[0]:BespokeTaskLoss(mute=mute)}
+            metrics={model.output[0].name.split("/")[0]:accuracy}
+            model.compile(optimizer=optimizer, loss=loss, metrics=metrics, run_eagerly=False, experimental_run_tf_function=False)
+        else:
+            loss = tf.keras.losses.CategoricalCrossentropy(label_smoothing=conf["label_smoothing"])
+            model.compile(optimizer=optimizer, loss=loss, metrics=['accuracy'], run_eagerly=False, experimental_run_tf_function=False)
 
         if conf["moving_average_decay"] > 0:
             callbacks.append(
@@ -291,12 +301,7 @@ def train_step(X, model, teacher_logits=None, y=None, ret_last_tensor=False):
 
 def iteration_based_train(dataset, model, model_handler, max_iters, lr_mode=0, teacher=None, with_label=True, with_distillation=True, callback_before_update=None, stopping_callback=None, augment=True, n_classes=100, eval_steps=-1, validate_func=None):
 
-    train_data_generator, valid_data_generator, test_data_generator = load_data(dataset, model_handler, training_augment=augment, n_classes=n_classes)
-
-    if dataset == "imagenet":
-        iters = int(math.ceil(1281167.0 / model_handler.batch_size))
-    else:
-        iters = len(train_data_generator)
+    (train_data_generator, valid_data_generator, test_data_generator), (iters, iters_val) = load_dataset(dataset, model_handler, training_augment=augment, n_classes=n_classes)
 
     global_step = 0
     callbacks_ = model_handler.get_callbacks(iters)

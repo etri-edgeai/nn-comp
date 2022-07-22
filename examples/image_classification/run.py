@@ -161,7 +161,7 @@ def prune(
         with open(model_handler.get_name()+"_"+postfix+".log", "w") as file_:
             json.dump(backup_args, file_)
 
-    (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, batch_size=model_handler.batch_size, n_classes=n_classes)
+    (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
     def validate(model_):
         model_handler.compile(model_, run_eagerly=True)
         if dataset == "imagenet":
@@ -633,10 +633,10 @@ def run():
 
         if config is not None and config["grad_accum_steps"] > 1:
             model_builder = lambda x, y: GAModel(
-                config["training_conf"]["use_amp"],
-                config["training_conf"]["hvd_fp16_compression"],
-                config["training_conf"]["grad_clip_norm"],
-                config["training_conf"]["grad_accum_steps"],
+                config["use_amp"],
+                config["hvd_fp16_compression"],
+                config["grad_clip_norm"],
+                config["grad_accum_steps"],
                 x, y
                 )
         else:
@@ -661,6 +661,9 @@ def run():
 
             model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
             model = make_distiller(model, teacher, positions=positions, scale=0.1, model_builder=model_builder)
+            config["mode"] = "distillation_label_free"
+        else:
+            config["mode"] = "finetune"
 
         train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir, conf=config, teacher=teacher)
     elif args.mode == "prune":
