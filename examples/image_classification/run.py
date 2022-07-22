@@ -58,6 +58,8 @@ from train import load_dataset, train, iteration_based_train
 from prep import add_augmentation, change_dtype
 from utils import optimizer_factory
 
+from ray.tune.integration.horovod import DistributedTrainableCreator
+
 custom_object_scope = {
     "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer, "HvdMovingAverage":optimizer_factory.HvdMovingAverage
 }
@@ -612,14 +614,16 @@ def run():
             tune.report(test=1, rank=hvd.rank())
 
         trainable = DistributedTrainableCreator(
-                training_function, num_slots=4, use_gpu=True)
+                training_function, num_workers=4, use_gpu=True)
 
         config_ray = copy.deepcopy(config)
         config_ray["initial_lr"] = tune.uniform(0.0001, 0.1)
         config_ray["decay_epcohs"] = tune.uniform(1.0, 4.0)
         config_ray["batch_size"] = tune.randint(2, 32)
+        config_ray["t_mul"] = tune.uniform(0.5, 4.0)
+        config_ray["m_mul"] = tune.uniform(0.5, 4.0)
 
-        results = tune.run(training_function, config=config, name="horovod", metric="mean_loss", mode="min", search_alg=algo)
+        results = tune.run(trainable, config=config, name="horovod", metric="mean_loss", mode="min", search_alg=algo)
         print(results.best_config)
 
     elif args.mode == "finetune": # train
