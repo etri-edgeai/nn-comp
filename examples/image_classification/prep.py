@@ -81,6 +81,7 @@ def add_augmentation(model, image_size, train_batch_size=32, do_mixup=False, do_
         model = keras.models.Model([input_layer], [prev_layer])
 
     def cond_mixing(args):
+      from dataloader.dataset_factory import mixing_lite
       images,mixup_weights,cutmix_masks,is_tr_split = args
       return tf.cond(tf.keras.backend.equal(is_tr_split[0],0), 
                      lambda: images, # eval phase
