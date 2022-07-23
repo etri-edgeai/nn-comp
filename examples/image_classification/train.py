@@ -124,7 +124,7 @@ def load_dataset(dataset, model_handler, sampling_ratio=1.0, training_augment=Tr
 
 def train(dataset, model, model_name, model_handler, run_eagerly=False, callbacks=None, is_training=True, augment=True, exclude_val=False, save_dir=None, n_classes=100, conf=None):
 
-    import horovod.tensorflow as hvd_
+    import horovod.tensorflow.keras as hvd_
 
     batch_size = model_handler.get_batch_size(dataset)
 
