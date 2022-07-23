@@ -14,6 +14,8 @@ from numba import njit
 from numpy import dot
 from numpy.linalg import norm as npnorm
 
+import horovod.tensorflow as hvd
+
 from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser, NNParser
 from nncompress.backend.tensorflow_ import SimplePruningGate, DifferentiableGate
 from nncompress.backend.tensorflow_.transformation import parse, inject, cut, unfold
@@ -588,9 +590,9 @@ class PruningCallback(keras.callbacks.Callback):
         ]
 
 
-    def on_train_batch_end(self, batch, logs=None, pbar=None):
+    def on_train_batch_end(self, batch, logs=None, pbar=None, model_=None):
         self._iter += 1
-        if self._iter % self.period == 0 and self.continue_pruning:
+        if self._iter % (self.period // hvd.size()) == 0 and self.continue_pruning:
 
             if self.compute_norm_func is not None:
                 self.norm, parents, g2l, contributors = self.compute_norm_func()
@@ -640,6 +642,8 @@ class PruningCallback(keras.callbacks.Callback):
             filtered = set()
             if self.enable_distortion_detect:
                 indices = set()
+
+            to_update = {}
             for __ in range(self.num_remove):
                 min_val = -1
                 min_idx = (-1, -1)
@@ -661,6 +665,8 @@ class PruningCallback(keras.callbacks.Callback):
                     gates_ = min_layer.gates.numpy()
                     gates_[min_idx[1]] = 0.0
                     min_layer.gates.assign(gates_)
+                    if min_layer.gates.name not in to_update:
+                        to_update[min_layer.gates.name] = min_layer.gates
                 num_removed_channels += 1
                 self._num_removed += 1
 
@@ -728,6 +734,8 @@ class PruningCallback(keras.callbacks.Callback):
                             gates_ = min_layer.gates.numpy()
                             gates_[min_idx_[1]] = 1.0
                             min_layer.gates.assign(gates_)
+                            if min_layer.gates.name not in to_update:
+                                to_update[min_layer.gates.name] = min_layer.gates
 
                         self._num_removed -= 1
                         num_removed_channels -= 1
@@ -780,6 +788,10 @@ class PruningCallback(keras.callbacks.Callback):
 
                 if compute_sparsity(groups) >= self.target_ratio:
                     break
+
+            if hvd.size() > 1:
+                to_update_  = [to_update[key] for key in to_update]
+                hvd.broadcast_variables(model_.variables, root_rank=0)
 
             self.continue_pruning = compute_sparsity(groups) < self.target_ratio
             for layer in self.targets:
@@ -845,7 +857,7 @@ def make_group_fisher(model,
         }
 
     def callback_after_deletion_(num_removed):
-        if num_removed % save_steps == 0:
+        if num_removed % save_steps == 0 and hvd.rank() == 0:
             assert save_dir is not None
             assert save_prefix is not None
             cmodel = parser.cut(gmodel)
@@ -889,8 +901,10 @@ def prune_step(X, model, teacher_logits, y, pc, print_by_pruning, pbar=None):
                 layer.collecting = True
 
         tape, loss, position_output = train_step(X, model, teacher_logits, y, ret_last_tensor=True)
+        tape = hvd.DistributedGradientTape(tape)
         _ = tape.gradient(loss, model.trainable_variables)
-        ret = pc.on_train_batch_end(None, pbar=pbar)
+
+        ret = pc.on_train_batch_end(None, pbar=pbar, model_=model)
 
         if pc.enable_distortion_detect:
             for idx in range(len(pc.subnets)):

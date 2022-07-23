@@ -8,8 +8,6 @@ from tensorflow.keras.layers import Dropout, Dense, GlobalAveragePooling2D, Flat
 import numpy as np
 import cv2
 
-import efficientnet.tfkeras as efn
-
 height = 224
 width = 224
 input_shape = (height, width, 3) # network input
@@ -30,10 +28,81 @@ def get_optimizer(mode=0):
     elif mode == 1:
         return Adam(lr=0.00001)
 
-def preprocess_func(img, dim):
+
+def _central_crop(image_list, crop_height, crop_width):
+  """Performs central crops of the given image list.
+
+  Args:
+    image_list: a list of image tensors of the same dimension but possibly
+      varying channel.
+    crop_height: the height of the image following the crop.
+    crop_width: the width of the image following the crop.
+
+  Returns:
+    the list of cropped images.
+  """
+  outputs = []
+  for image in image_list:
+    image_height = tf.shape(image)[0]
+    image_width = tf.shape(image)[1]
+
+    offset_height = (image_height - crop_height) / 2
+    offset_width = (image_width - crop_width) / 2
+
+    outputs.append(_crop(image, offset_height, offset_width,
+                         crop_height, crop_width))
+  return outputs
+
+
+def _crop(image, offset_height, offset_width, crop_height, crop_width):
+  """Crops the given image using the provided offsets and sizes.
+
+  Note that the method doesn't assume we know the input image size but it does
+  assume we know the input image rank.
+
+  Args:
+    image: an image of shape [height, width, channels].
+    offset_height: a scalar tensor indicating the height offset.
+    offset_width: a scalar tensor indicating the width offset.
+    crop_height: the height of the cropped image.
+    crop_width: the width of the cropped image.
+
+  Returns:
+    the cropped (and resized) image.
+
+  Raises:
+    InvalidArgumentError: if the rank is not 3 or if the image dimensions are
+      less than the crop size.
+  """
+  original_shape = tf.shape(image)
+
+  rank_assertion = tf.Assert(
+      tf.equal(tf.rank(image), 3),
+      ['Rank of image must be equal to 3.'])
+  with tf.control_dependencies([rank_assertion]):
+    cropped_shape = tf.stack([crop_height, crop_width, original_shape[2]])
+
+  size_assertion = tf.Assert(
+      tf.logical_and(
+          tf.greater_equal(original_shape[0], crop_height),
+          tf.greater_equal(original_shape[1], crop_width)),
+      ['Crop size greater than the image size.'])
+
+  offsets = tf.cast(tf.stack([offset_height, offset_width, 0]), dtype=tf.int32)
+
+  # Use tf.slice instead of crop_to_bounding box as it accepts tensors to
+  # define the crop size.
+  with tf.control_dependencies([size_assertion]):
+    image = tf.slice(image, offsets, cropped_shape)
+  return tf.reshape(image, cropped_shape)
+
+def data_preprocess_func(img, dim):
+    img = tf.keras.preprocessing.image.smart_resize(img, [256, 256], interpolation='bicubic')
+    img = _central_crop([img], 224, 224)[0]
+    return img
+
+def model_preprocess_func(img, dim):
     img = tf.keras.applications.resnet.preprocess_input(img)
-    #img = cv2.resize(img, (height, width), interpolation=cv2.INTER_CUBIC)
-    img = tf.image.resize(img, (height, width))
     return img
 
 def get_model(dataset, n_classes=100):

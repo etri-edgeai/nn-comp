@@ -277,6 +277,7 @@ class Dataset:
   mixup_alpha=0.0,
   defer_img_mixing=True,
   hvd_size=None,
+  data_preprocess_func=None,
   model_preprocess_func=None,
   disable_map_parallelization=False
   ):
@@ -303,6 +304,7 @@ class Dataset:
     self.cutmix_alpha = cutmix_alpha
     self.defer_img_mixing = defer_img_mixing
     self.disable_map_parallelization = disable_map_parallelization
+    self.data_preprocess_func = data_preprocess_func
     self.model_preprocess_func = model_preprocess_func
     self._num_gpus = hvd.size() if not hvd_size else hvd_size
     
@@ -563,7 +565,8 @@ class Dataset:
           mean_subtract=self._mean_subtract,
           standardize=self._standardize,
           dtype=self.dtype,
-          augmenter=self._augmenter)
+          augmenter=self._augmenter,
+          prep_func=self.data_preprocess_func)
     else:
       image = preprocessing.preprocess_for_eval(
           image,
@@ -571,7 +574,8 @@ class Dataset:
           num_channels=self._num_channels,
           mean_subtract=self._mean_subtract,
           standardize=self._standardize,
-          dtype=self.dtype)
+          dtype=self.dtype,
+          prep_func=self.data_preprocess_func)
 
     image = self.model_preprocess_func(image)
 
