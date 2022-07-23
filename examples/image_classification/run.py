@@ -588,6 +588,7 @@ def run():
             mixed_precision.set_global_policy('mixed_float16')
             model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=None)
         model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
+        conf["mode"] = "train"
         train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=False, n_classes=n_classes, save_dir=save_dir, conf=config)
 
     elif args.mode == "hpo": # train
