@@ -45,12 +45,15 @@ def get_batch_size(dataset):
 def get_name():
     return "efnet"
 
-def preprocess_func(img, shape):
+def data_preprocess_func(img, shape):
+    img = center_crop_and_resize(img, height)
+    #img = preprocess_input(img)
+    return img
 
+def model_preprocess_func(img, shape):
     img = tf.keras.applications.imagenet_utils.preprocess_input(
         img, data_format=None, mode='torch'
         )
-
     #img = preprocess_input(img)
     return img
 
@@ -74,9 +77,9 @@ def get_model(dataset, n_classes=100):
 
 def get_optimizer(mode=0):
     if mode == 0:
-        return Adam(lr=0.0001)
+        return Adam(lr=0.0001*hvd.size())
     elif mode == 1:
-        return Adam(lr=0.00001)
+        return Adam(lr=0.00001*hvd.size())
 
 
 def compile(model, run_eagerly=True, lr=None, post_opt=None):

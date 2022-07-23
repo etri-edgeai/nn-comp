@@ -107,8 +107,12 @@ class PruningNNParser(NNParser):
             augmented_transformers = None
         affecting_layers = self.get_affecting_layers(augmented_transformers)
 
+        affecting_layers_keys = sorted(list(affecting_layers.keys()))
+
         # Find sharing groups
-        for layer, group  in affecting_layers.items():
+        #for layer, group  in affecting_layers.items():
+        for key in affecting_layers_keys:
+            layer, group = key, affecting_layers[key]
             h = get_handler(self._model.get_layer(layer[0]).__class__.__name__)
             if h.is_concat():
                 continue

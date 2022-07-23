@@ -11,9 +11,10 @@ from dataloader import dataset_factory
 from utils import callbacks as custom_callbacks
 from utils import optimizer_factory
 
-import horovod.tensorflow.keras as hvd
+import horovod.tensorflow as hvd
 
 from models.loss import BespokeTaskLoss, accuracy
+from prep import add_augmentation
 
 # constants
 epochs = 50
@@ -61,7 +62,8 @@ def load_data_nvidia(dataset, model_handler, sampling_ratio=1.0, training_augmen
         cutmix_alpha=cutmix_alpha, 
         mixup_alpha=mixup_alpha,
         defer_img_mixing=True,
-        model_preprocess_func=lambda x:model_handler.preprocess_func(x, None),
+        data_preprocess_func=lambda x:model_handler.data_preprocess_func(x, None),
+        model_preprocess_func=lambda x:model_handler.model_preprocess_func(x, None),
         disable_map_parallelization=False))
 
     val_split = "test"
@@ -88,7 +90,8 @@ def load_data_nvidia(dataset, model_handler, sampling_ratio=1.0, training_augmen
         mixup_alpha=0.0,
         defer_img_mixing=False,
         hvd_size=hvd.size(),
-        model_preprocess_func=lambda x:model_handler.preprocess_func(x, None),
+        data_preprocess_func=lambda x:model_handler.data_preprocess_func(x, None),
+        model_preprocess_func=lambda x:model_handler.model_preprocess_func(x, None),
         disable_map_parallelization=False))
 
     return [ builder.build() for builder in builders ]
@@ -121,6 +124,8 @@ def load_dataset(dataset, model_handler, sampling_ratio=1.0, training_augment=Tr
 
 def train(dataset, model, model_name, model_handler, run_eagerly=False, callbacks=None, is_training=True, augment=True, exclude_val=False, save_dir=None, n_classes=100, conf=None):
 
+    import horovod.tensorflow as hvd_
+
     batch_size = model_handler.get_batch_size(dataset)
 
     if type(dataset) == str:
@@ -139,8 +144,8 @@ def train(dataset, model, model_name, model_handler, run_eagerly=False, callback
         callbacks = []
 
     if conf is not None:
-        callbacks.append(hvd.callbacks.BroadcastGlobalVariablesCallback(0))
-        callbacks.append(hvd.callbacks.MetricAverageCallback())
+        callbacks.append(hvd_.callbacks.BroadcastGlobalVariablesCallback(0))
+        callbacks.append(hvd_.callbacks.MetricAverageCallback())
 
         lr_params = {
             'name':conf["lr_name"],
@@ -160,7 +165,7 @@ def train(dataset, model, model_name, model_handler, run_eagerly=False, callback
 
         learning_rate = optimizer_factory.build_learning_rate(
             params=lr_params,
-            batch_size=batch_size * hvd.size() * conf["grad_accum_steps"], # updates are iteration based not batch-index based
+            batch_size=batch_size * hvd_.size() * conf["grad_accum_steps"], # updates are iteration based not batch-index based
             train_steps=iters,
             max_epochs=epochs)
 
@@ -187,7 +192,7 @@ def train(dataset, model, model_name, model_handler, run_eagerly=False, callback
         if conf["use_amp"] and conf["grad_accum_steps"] > 1:
             optimizer = tf.keras.mixed_precision.LossScaleOptimizer(optimizer)
         elif conf["grad_accum_steps"] == 1:
-            optimizer = hvd.DistributedOptimizer(optimizer, compression=hvd.Compression.fp16 if conf["hvd_fp16_compression"] else hvd.Compression.none)
+            optimizer = hvd_.DistributedOptimizer(optimizer, compression=hvd_.Compression.fp16 if conf["hvd_fp16_compression"] else hvd_.Compression.none)
 
 
         # compile
@@ -209,7 +214,7 @@ def train(dataset, model, model_name, model_handler, run_eagerly=False, callback
 
     print(model.count_params())
 
-    if save_dir is not None and hvd.local_rank() == 0:
+    if save_dir is not None and hvd_.local_rank() == 0:
         model_name_ = '%s_model.{epoch:03d}.h5' % (model_name+"_"+dataset)
         if not os.path.isdir(save_dir):
             os.makedirs(save_dir)
@@ -241,14 +246,14 @@ def train(dataset, model, model_name, model_handler, run_eagerly=False, callback
     if exclude_val:
         model_history = model.fit(train_data_generator,
                                         callbacks=callbacks,
-                                        verbose=1 if hvd.rank() == 0 else 0,
+                                        verbose=1 if hvd_.rank() == 0 else 0,
                                         epochs=epochs_,
                                         steps_per_epoch=iters)
     else:
         model_history = model.fit(train_data_generator,
                                         validation_data=valid_data_generator,
                                         callbacks=callbacks,
-                                        verbose=1 if hvd.rank() == 0 else 0,
+                                        verbose=1 if hvd_.rank() == 0 else 0,
                                         epochs=epochs_,
                                         steps_per_epoch=iters)
 
@@ -301,6 +306,15 @@ def train_step(X, model, teacher_logits=None, y=None, ret_last_tensor=False):
 
 def iteration_based_train(dataset, model, model_handler, max_iters, lr_mode=0, teacher=None, with_label=True, with_distillation=True, callback_before_update=None, stopping_callback=None, augment=True, n_classes=100, eval_steps=-1, validate_func=None):
 
+    from nncompress.backend.tensorflow_ import SimplePruningGate
+    from nncompress.backend.tensorflow_.transformation.pruning_parser import StopGradientLayer
+    from utils import optimizer_factory
+    custom_object_scope = {
+        "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer, "HvdMovingAverage":optimizer_factory.HvdMovingAverage
+    }   
+    batch_size = model_handler.get_batch_size(dataset)
+    model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
+
     (train_data_generator, valid_data_generator, test_data_generator), (iters, iters_val) = load_dataset(dataset, model_handler, training_augment=augment, n_classes=n_classes)
 
     global_step = 0
@@ -308,8 +322,9 @@ def iteration_based_train(dataset, model, model_handler, max_iters, lr_mode=0, t
     optimizer = model_handler.get_optimizer(lr_mode)
 
     epoch = 0
-    with tqdm(total=max_iters, ncols=120) as pbar:
-        while global_step < max_iters: 
+    first_batch = True
+    with tqdm(total=max_iters // hvd.size(), ncols=120, disable=hvd.rank() != 0) as pbar:
+        while global_step < max_iters // hvd.size(): 
             # start with new epoch.
             done = False
             idx = 0
@@ -333,6 +348,9 @@ def iteration_based_train(dataset, model, model_handler, max_iters, lr_mode=0, t
                         tape, loss = train_step(X, model, None, y)
                 else:
                     tape, loss = train_step(X, model, teacher_logits, None)
+
+                tape = hvd.DistributedGradientTape(tape)
+
                 gradients = tape.gradient(loss, model.trainable_variables)
                 optimizer.apply_gradients(zip(gradients, model.trainable_variables))
 
@@ -344,8 +362,14 @@ def iteration_based_train(dataset, model, model_handler, max_iters, lr_mode=0, t
 
                 if eval_steps != -1 and global_step % eval_steps == 0 and validate_func is not None:
                     val = validate_func()
-                    print("Global Steps %d: %f" % (global_step, val))
-                    logging.info("Global Steps %d: %f" % (global_step, val))
+                    if hvd.rank() == 0:
+                        print("Global Steps %d: %f" % (global_step, val))
+                        logging.info("Global Steps %d: %f" % (global_step, val))
+
+                if first_batch:
+                    hvd.broadcast_variables(model.variables, root_rank=0)
+                    hvd.broadcast_variables(optimizer.variables(), root_rank=0)
+                    first_batch = False
 
                 if stopping_callback is not None and stopping_callback(idx, global_step):
                     done = True
