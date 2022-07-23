@@ -194,7 +194,6 @@ def train(dataset, model, model_name, model_handler, run_eagerly=False, callback
         elif conf["grad_accum_steps"] == 1:
             optimizer = hvd_.DistributedOptimizer(optimizer, compression=hvd_.Compression.fp16 if conf["hvd_fp16_compression"] else hvd_.Compression.none)
 
-
         # compile
         if "distillation" in conf["mode"]:
             mute = "free" in conf["mode"]
