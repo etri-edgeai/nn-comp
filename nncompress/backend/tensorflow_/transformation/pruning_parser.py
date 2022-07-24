@@ -107,12 +107,8 @@ class PruningNNParser(NNParser):
             augmented_transformers = None
         affecting_layers = self.get_affecting_layers(augmented_transformers)
 
-        affecting_layers_keys = sorted(list(affecting_layers.keys()))
-
         # Find sharing groups
-        #for layer, group  in affecting_layers.items():
-        for key in affecting_layers_keys:
-            layer, group = key, affecting_layers[key]
+        for layer, group  in affecting_layers.items():
             h = get_handler(self._model.get_layer(layer[0]).__class__.__name__)
             if h.is_concat():
                 continue
@@ -436,15 +432,15 @@ class PruningNNParser(NNParser):
                             gate_dict_, gate_level_ = gate
                         else: # Handling gate is None (no pruning)
                             channel = self.get_nchannel(src)
-                            lambda_dict = serialize(Lambda(lambda x: tf.ones_like(tf.math.reduce_sum(x, axis=-1)), name=self.get_id("ones")))
+                            lambda_dict = serialize(Lambda(lambda x: tf.ones((channel,)), name=self.get_id("ones")))
                             lambda_dict["inbound_nodes"].append([
                                 [src, level_change[0], tensor, {}]
                             ])
                             model_dict["config"]["layers"].append(lambda_dict)
                             gate_dict_ = lambda_dict
                             gate_level_ = 0
-                        tensor = 1 if gate_dict_["class_name"] == self._gate_class.__name__ else 0
-                        inbound.append([gate_dict_["name"], gate_level_, tensor, {}])
+                        tensor_ = 1 if gate_dict_["class_name"] == self._gate_class.__name__ else 0
+                        inbound.append([gate_dict_["name"], gate_level_, tensor_, {}])
                     gate_dict["inbound_nodes"].append(inbound)
                 gate_mapping[(n, level)] = gate_dict, gate_level
 
@@ -629,11 +625,12 @@ class PruningNNParser(NNParser):
             for idx, layer_name in enumerate(layer_names):
                 for g in groups:
                     if has_intersection(g, frozenset([layer_name])):
-                        dict_ = {}
-                        r = inspect(g, dict_, 0)
-                        group_struct.append(dict_)
-                        target_groups.append(g)
-                        break
+                        if g not in target_groups:
+                            dict_ = {}
+                            r = inspect(g, dict_, 0)
+                            group_struct.append(dict_)
+                            target_groups.append(g)
+                            break
         else:
             target_groups = groups
             for g in groups:

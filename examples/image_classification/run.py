@@ -51,7 +51,7 @@ from nncompress import backend as M
 from curl import apply_curl
 from hrank import apply_hrank
 from l2 import apply_l2prune
-from group_fisher import make_group_fisher, add_gates, prune_step, compute_positions, get_num_all_channels
+from group_fisher import make_group_fisher, add_gates, prune_step, compute_positions, flatten
 from loader import get_model_handler
 
 from train import load_dataset, train, iteration_based_train
@@ -64,11 +64,23 @@ custom_object_scope = {
     "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer, "HvdMovingAverage":optimizer_factory.HvdMovingAverage
 }
 
-def get_total_channels(groups, model):
+def get_total_channels(groups, model, parser):
     total = 0
     for g in groups:
-        layer = model.get_layer(g[0][0])
-        total += layer.filters
+        if type(g[0][0]) == str:
+            layer = model.get_layer(g[0][0])
+            total += layer.filters
+        else:
+            g_ = flatten(g[0]) # g[1] is an integer
+            _, group_struct = parser.get_group_topology(g_)
+            max_ = 0
+            for key, val in group_struct[0].items():
+                if type(key) == str:
+                    val = sorted(val, key=lambda x:x[0])
+                    for v in val:
+                        if v[1] > max_:
+                            max_ = v[1]
+            total += max_
     return total
 
 def model_path_based_load(dataset, model_path, model_handler):
@@ -334,7 +346,7 @@ def prune(
         tt = None
         gg = gmodel
  
-    total_channels = get_total_channels(ordered_groups, gmodel)
+    total_channels = get_total_channels(ordered_groups, gmodel, parser)
     num_target_channels = math.ceil(total_channels * target_ratio)
     if not ret_score:
         print(total_channels, num_target_channels)
