@@ -363,6 +363,7 @@ class PruningNNParser(NNParser):
         else:
             sharing_groups_ = self._sharing_groups
 
+        sharing_groups_ = sorted(sharing_groups_)
         gate_mapping = {}
         for group in sharing_groups_:
 
