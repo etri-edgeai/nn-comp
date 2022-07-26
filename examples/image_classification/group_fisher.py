@@ -242,7 +242,7 @@ def compute_positions(model, ordered_groups, torder, parser, position_mode, num_
                 act = parser.get_first_activation(b[-1][0][0]) # last layer.
             else:
                 act = parser.get_first_activation(b[-1][1])
-            if act not in positions:
+            if act not in positions and act is not None:
                 positions.append(act)
 
     elif position_mode == 2: # random
