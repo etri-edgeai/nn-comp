@@ -301,7 +301,7 @@ def prune(
             for key, val in model_handler.get_custom_objects().items():
                 custom_object_scope[key] = val
         with keras.utils.custom_object_scope(custom_object_scope):
-            t_model = M.add_prefix(copied_model, "t_")
+            t_model = M.add_prefix(copied_model, "t_", not_change_input=True)
 
         if method == "gf" and enable_distortion_detect:
             pc.build_subnets(positions, custom_objects=model_handler.get_custom_objects())
@@ -408,6 +408,9 @@ def prune(
         print(profile)
         logging.info(profile)
         tf.keras.models.save_model(cmodel, save_dir+"/"+model_handler.get_name()+postfix+".h5")
+        tf.keras.models.save_model(gmodel, save_dir+"/"+model_handler.get_name()+postfix+"_gated.h5")
+        with open(save_dir+"/"+model_handler.get_name()+postfix+".json", "w") as f:
+            json.dump(positions, f)
         from keras_flops import get_flops
         flops = get_flops(cmodel, batch_size=1)
         print(f"FLOPS: {flops / 10 ** 9:.06} G")
@@ -426,7 +429,7 @@ def make_distiller(model, teacher, positions, scale=0.1, model_builder=None):
         "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer
     }
     with keras.utils.custom_object_scope(custom_object_scope):
-        t_model = M.add_prefix(teacher, "t_")
+        t_model = M.add_prefix(teacher, "t_", not_change_input=True)
 
     t_outputs = []
     for p in positions:
@@ -443,44 +446,40 @@ def make_distiller(model, teacher, positions, scale=0.1, model_builder=None):
         if type(p) == list:
             sub_p = []
             for l in p:
-                sub_p.append(gmodel.get_layer(l).output)
+                sub_p.append(model.get_layer(l).output)
             g_outputs.append(sub_p)
         else:
-            g_outputs.append(gmodel.get_layer(p).output)
+            g_outputs.append(model.get_layer(p).output)
 
     tt = tf.keras.Model(t_model.input, [t_model.output]+t_outputs)
     tt.trainable = False
-    gg = tf.keras.Model(gmodel.input, [gmodel.output]+g_outputs)
 
-    toutputs_ = tt(gg.get_layer("input_lambda").output)
+    toutputs_ = tt(model.input)
 
     if model_builder is None:
-        new_model = tf.keras.Model(gg.input, [gg.output]+toutputs_)
+        new_model = tf.keras.Model(model.input, [model.output]+toutputs_)
     else:
-        new_model = model_builder(gg.input, [gg.output]+toutputs_)
+        new_model = model_builder(model.input, [model.output]+toutputs_)
 
-    for p in positions:
-        if type(p) == list:
+    for s, t in zip(g_outputs, toutputs_[1:]):
+        if type(s) == list:
             temp = None
-            for l in p:
-                t = new_model.get_layer("t_"+l).output
-                s = new_model.get_layer(l).output
+            for s_, t_ in zip(s, t):
                 if temp is None:
-                    temp = tf.reduce_mean(tf.keras.losses.mean_squared_error(t, s)*scale)
+                    temp = tf.reduce_mean(tf.keras.losses.mean_squared_error(t_, s_)*scale)
                 else:
-                    temp += tf.reduce_mean(tf.keras.losses.mean_squared_error(t, s)*scale)
-            temp /= len(p)
-            new_model.add_loss(temp)            
+                    temp += tf.reduce_mean(tf.keras.losses.mean_squared_error(t_, s_)*scale)
+            temp /= len(s)
+            new_model.add_loss(temp)
         else:
-            t = new_model.get_layer("t_"+p).output
-            s = new_model.get_layer(p).output
             new_model.add_loss(tf.reduce_mean(tf.keras.losses.mean_squared_error(t, s)*scale))
-    new_model.add_loss(tf.reduce_mean(tf.keras.losses.kl_divergence(new_model.output[0], toutputs_[0])*scale))
+
+    new_model.add_loss(tf.reduce_mean(tf.keras.losses.kl_divergence(model.output, toutputs_[0])*scale))
 
     for layer in tt.layers:
         layer.trainable = False
 
-    for layer in gg.layers:
+    for layer in model.layers:
         layer.trainable = True
         if layer.__class__ == SimplePruningGate:
             #layer.trainable = False
@@ -656,21 +655,25 @@ def run():
             model_builder = None
 
         model = model_path_based_load(args.dataset, args.model_path, model_handler)
+        # position_mode must be str
+        import json
+        with open(args.position_mode, "r") as f: 
+            positions = json.load(f)
+        position_set = set(positions)
+
         if config["use_amp"]:
             tf.keras.backend.set_floatx("float16")
             from tensorflow.keras import mixed_precision
             mixed_precision.set_global_policy('mixed_float16')
-            model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=distill_set)
+            model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=position_set)
 
         if args.model_path2 is not None:
             teacher = model_path_based_load(args.dataset, args.model_path2, model_handler)
             if config["use_amp"]:
-                teacher = change_dtype(teacher, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=distill_set)
+                teacher = change_dtype(teacher, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=position_set)
 
-            # position_mode must be str
-            import json
-            with open(args.position_mode, "r") as f: 
-                positions = json.load(f)["data"]
+            from nncompress.backend.tensorflow_.transformation import unfold
+            teacher = unfold(teacher)
 
             model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
             model = make_distiller(model, teacher, positions=positions, scale=0.1, model_builder=model_builder)
@@ -678,7 +681,7 @@ def run():
         else:
             config["mode"] = "finetune"
 
-        train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir, conf=config, teacher=teacher)
+        train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir, conf=config)
     elif args.mode == "prune":
 
         iter_dir = save_dir+"/pruning_steps"

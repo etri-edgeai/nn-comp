@@ -320,7 +320,7 @@ class PruningNNParser(NNParser):
 
         sources = [ (node_name, self._graph.nodes(data=True)[node_name]) ]
         self.traverse(sources=sources, node_callbacks=[act_mapping], stopping_condition=stop)
-        return act[0]
+        return act[0] if len(act) > 0 else None
 
 
     def inject(self, avoid=None, with_mapping=False, with_splits=False, allow_pruning_last=False):

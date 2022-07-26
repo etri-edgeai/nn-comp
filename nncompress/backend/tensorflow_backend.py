@@ -225,25 +225,39 @@ def decompose(model, targets, decomposed, custom_objects=None):
             ret.get_layer(name).set_weights((weight,))
     return ret, replace_mappings
 
-def add_prefix(model, prefix, custom_objects=None, val_check=None, not_change_model_name=False):
+def add_prefix(model, prefix, custom_objects=None, val_check=None, not_change_model_name=False, not_change_input=False):
     model_dict = json.loads(model.to_json())
     if not not_change_model_name:
         model_dict["config"]["name"] = prefix + model_dict["config"]["name"]
+    is_input = set()
     for layer in model_dict["config"]["layers"]:
+        if layer["class_name"] == "InputLayer":
+            if "name" in layer:
+                is_input.add(layer["name"])
+            else:
+                is_input.add(layer["config"]["name"])
+    for layer in model_dict["config"]["layers"]:
+        if layer["class_name"] == "InputLayer" and not_change_input:
+            continue
         layer["name"] = prefix + layer["name"]
         if "name" in layer["config"]:
             layer["config"]["name"] = prefix + layer["config"]["name"]
         for flow in layer["inbound_nodes"]:
             for inbound in flow:
+                if inbound[0] in is_input and not_change_input:
+                    continue
                 inbound[0] = prefix + inbound[0]
-    for input_layer in model_dict["config"]["input_layers"]:
-        input_layer[0] = prefix + input_layer[0]
+    if not not_change_input:
+        for input_layer in model_dict["config"]["input_layers"]:
+            input_layer[0] = prefix + input_layer[0]
     for output_layer in model_dict["config"]["output_layers"]:
         output_layer[0] = prefix + output_layer[0]
 
     model_json = json.dumps(model_dict)
     ret = tf.keras.models.model_from_json(model_json, custom_objects=custom_objects)
     for layer in model.layers:
+        if layer.name in is_input:
+            continue
         ret.get_layer(prefix+layer.name).set_weights(layer.get_weights())
 
     if val_check is not None:
