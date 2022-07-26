@@ -535,10 +535,13 @@ class PruningNNParser(NNParser):
                             gate_mapping[(inbound[0], inbound[1])] = gate
 
         history = {n:None for n in self._graph.nodes}
-        weights = {
-            n:gmodel.get_layer(n).get_weights() for n in self._graph.nodes
-            if gmodel.get_layer(n).__class__.__name__ != "Functional"
-        }
+        weights = {}
+        for n in self._graph.nodes:
+            try:
+                if gmodel.get_layer(n).__class__.__name__ != "Functional":
+                    weights[n] = gmodel.get_layer(n).get_weights()
+            except ValueError as e:
+                print("%s does not exist, but ignore it." % n)
 
         def cut_weights(n, level):
 
