@@ -585,7 +585,7 @@ class NNParser(object):
 
         return input_leaves, output_leaves
 
-    def get_subnet(self, block, model, target_shapes=None):
+    def get_subnet(self, block, model, in_target_shapes=None, out_target_shapes=None, use_adapter=False):
         # block: list of names
         block_set = set([l.name for l in block])
         inputs, outputs = self.get_leaves(block)
@@ -618,6 +618,7 @@ class NNParser(object):
 
         # define input_tensor
         in_tensors = {}
+        in_adapters = {}
         for i, in_ in enumerate(inputs):
             """
             if type(layers[in_].input) == list:
@@ -634,22 +635,29 @@ class NNParser(object):
                     in_tensors[in_] = tf.keras.Input(shape=layers[in_].input.shape)
             """
             shape = list(layers[in_].output.shape)
-            if target_shapes is not None:
-                shape[1] = target_shapes[i][1]
-                shape[2] = target_shapes[i][2]
+            if in_target_shapes is not None:
+                shape[1] = in_target_shapes[i][1]
+                shape[2] = in_target_shapes[i][2]
             if layers[in_].output.shape[0] is None:
                 shape = shape[1:]
                 in_tensors[in_] = tf.keras.Input(shape=shape, name=in_+"_inputlayer")
+                if use_adapter and shape[-1] > layers[in_].output.shape[-1] and in_target_shapes is not None:
+                    in_adapters[in_] = tf.keras.layers.Conv2D(layers[in_].output.shape[-1], 1, name=in_+"_b_adapt")
+                else:
+                    in_adapters[in_] = None
             else:
                 in_tensors[in_] = tf.keras.Input(shape=shape, name=in_+"_inputlayer")
+                if use_adapter and shape[-1] > layers[in_].output.shape[-1] and in_target_shapes is not None:
+                    in_adapters[in_] = tf.keras.layers.Conv2D(layers[in_].output.shape[-1], 1, name=in_+"_b_adapt")
+                else:
+                    in_adapters[in_] = None
 
         out_tensors = {}
-
         def callback_(n, level):
             if n in in_tensors:
                 assert n not in out_tensors
                 out_tensors.update({
-                    (n,level):in_tensors[n]
+                    (n,level):in_adapters[n](in_tensors[n]) if in_adapters[n] is not None else in_tensors[n]
                 })
             else: 
                 inputs_ = []
@@ -681,8 +689,14 @@ class NNParser(object):
         self.traverse(sources=sources, node_callbacks=[callback_], stopping_condition=stop_cond)
 
         #TODO
+        out_adapters = {out:None for out in outputs}
+        if out_target_shapes is not None:
+            for out, out_shape in zip(outputs, out_target_shapes):
+                if layers[out].output.shape[-1] < out_shape[-1]:
+                    out_adapters[out] = tf.keras.layers.Conv2D(out_shape[-1], 1, name=out+"_b_out_adapt")
+
         outputs_ = [
-            out_tensors[(out, 0)] for out in outputs
+            out_adapters[out](out_tensors[(out, 0)]) if out_adapters[out] is not None else out_tensors[(out, 0)] for out in outputs
         ]
         inputs_ = [
             in_tensors[in_] for in_ in inputs
