@@ -51,22 +51,36 @@ from nncompress import backend as M
 from curl import apply_curl
 from hrank import apply_hrank
 from l2 import apply_l2prune
-from group_fisher import make_group_fisher, add_gates, prune_step, compute_positions, get_num_all_channels
+from group_fisher import make_group_fisher, add_gates, prune_step, compute_positions, flatten
 from loader import get_model_handler
 
 from train import load_dataset, train, iteration_based_train
 from prep import add_augmentation, change_dtype
 from utils import optimizer_factory
 
+from ray.tune.integration.horovod import DistributedTrainableCreator
+
 custom_object_scope = {
     "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer, "HvdMovingAverage":optimizer_factory.HvdMovingAverage
 }
 
-def get_total_channels(groups, model):
+def get_total_channels(groups, model, parser):
     total = 0
     for g in groups:
-        layer = model.get_layer(g[0][0])
-        total += layer.filters
+        if type(g[0][0]) == str:
+            layer = model.get_layer(g[0][0])
+            total += layer.filters
+        else:
+            g_ = flatten(g[0]) # g[1] is an integer
+            _, group_struct = parser.get_group_topology(g_)
+            max_ = 0
+            for key, val in group_struct[0].items():
+                if type(key) == str:
+                    val = sorted(val, key=lambda x:x[0])
+                    for v in val:
+                        if v[1] > max_:
+                            max_ = v[1]
+            total += max_
     return total
 
 def model_path_based_load(dataset, model_path, model_handler):
@@ -159,7 +173,7 @@ def prune(
         with open(model_handler.get_name()+"_"+postfix+".log", "w") as file_:
             json.dump(backup_args, file_)
 
-    (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, batch_size=model_handler.batch_size, n_classes=n_classes)
+    (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
     def validate(model_):
         model_handler.compile(model_, run_eagerly=True)
         if dataset == "imagenet":
@@ -287,7 +301,7 @@ def prune(
             for key, val in model_handler.get_custom_objects().items():
                 custom_object_scope[key] = val
         with keras.utils.custom_object_scope(custom_object_scope):
-            t_model = M.add_prefix(copied_model, "t_")
+            t_model = M.add_prefix(copied_model, "t_", not_change_input=True)
 
         if method == "gf" and enable_distortion_detect:
             pc.build_subnets(positions, custom_objects=model_handler.get_custom_objects())
@@ -332,7 +346,7 @@ def prune(
         tt = None
         gg = gmodel
  
-    total_channels = get_total_channels(ordered_groups, gmodel)
+    total_channels = get_total_channels(ordered_groups, gmodel, parser)
     num_target_channels = math.ceil(total_channels * target_ratio)
     if not ret_score:
         print(total_channels, num_target_channels)
@@ -394,6 +408,9 @@ def prune(
         print(profile)
         logging.info(profile)
         tf.keras.models.save_model(cmodel, save_dir+"/"+model_handler.get_name()+postfix+".h5")
+        tf.keras.models.save_model(gmodel, save_dir+"/"+model_handler.get_name()+postfix+"_gated.h5")
+        with open(save_dir+"/"+model_handler.get_name()+postfix+".json", "w") as f:
+            json.dump(positions, f)
         from keras_flops import get_flops
         flops = get_flops(cmodel, batch_size=1)
         print(f"FLOPS: {flops / 10 ** 9:.06} G")
@@ -412,7 +429,7 @@ def make_distiller(model, teacher, positions, scale=0.1, model_builder=None):
         "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer
     }
     with keras.utils.custom_object_scope(custom_object_scope):
-        t_model = M.add_prefix(teacher, "t_")
+        t_model = M.add_prefix(teacher, "t_", not_change_input=True)
 
     t_outputs = []
     for p in positions:
@@ -429,44 +446,40 @@ def make_distiller(model, teacher, positions, scale=0.1, model_builder=None):
         if type(p) == list:
             sub_p = []
             for l in p:
-                sub_p.append(gmodel.get_layer(l).output)
+                sub_p.append(model.get_layer(l).output)
             g_outputs.append(sub_p)
         else:
-            g_outputs.append(gmodel.get_layer(p).output)
+            g_outputs.append(model.get_layer(p).output)
 
     tt = tf.keras.Model(t_model.input, [t_model.output]+t_outputs)
     tt.trainable = False
-    gg = tf.keras.Model(gmodel.input, [gmodel.output]+g_outputs)
 
-    toutputs_ = tt(gg.get_layer("input_lambda").output)
+    toutputs_ = tt(model.input)
 
     if model_builder is None:
-        new_model = tf.keras.Model(gg.input, [gg.output]+toutputs_)
+        new_model = tf.keras.Model(model.input, [model.output]+toutputs_)
     else:
-        new_model = model_builder(gg.input, [gg.output]+toutputs_)
+        new_model = model_builder(model.input, [model.output]+toutputs_)
 
-    for p in positions:
-        if type(p) == list:
+    for s, t in zip(g_outputs, toutputs_[1:]):
+        if type(s) == list:
             temp = None
-            for l in p:
-                t = new_model.get_layer("t_"+l).output
-                s = new_model.get_layer(l).output
+            for s_, t_ in zip(s, t):
                 if temp is None:
-                    temp = tf.reduce_mean(tf.keras.losses.mean_squared_error(t, s)*scale)
+                    temp = tf.reduce_mean(tf.keras.losses.mean_squared_error(t_, s_)*scale)
                 else:
-                    temp += tf.reduce_mean(tf.keras.losses.mean_squared_error(t, s)*scale)
-            temp /= len(p)
-            new_model.add_loss(temp)            
+                    temp += tf.reduce_mean(tf.keras.losses.mean_squared_error(t_, s_)*scale)
+            temp /= len(s)
+            new_model.add_loss(temp)
         else:
-            t = new_model.get_layer("t_"+p).output
-            s = new_model.get_layer(p).output
             new_model.add_loss(tf.reduce_mean(tf.keras.losses.mean_squared_error(t, s)*scale))
-    new_model.add_loss(tf.reduce_mean(tf.keras.losses.kl_divergence(new_model.output[0], toutputs_[0])*scale))
+
+    new_model.add_loss(tf.reduce_mean(tf.keras.losses.kl_divergence(model.output, toutputs_[0])*scale))
 
     for layer in tt.layers:
         layer.trainable = False
 
-    for layer in gg.layers:
+    for layer in model.layers:
         layer.trainable = True
         if layer.__class__ == SimplePruningGate:
             #layer.trainable = False
@@ -586,6 +599,7 @@ def run():
             mixed_precision.set_global_policy('mixed_float16')
             model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=None)
         model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
+        config["mode"] = "train"
         train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=False, n_classes=n_classes, save_dir=save_dir, conf=config)
 
     elif args.mode == "hpo": # train
@@ -612,14 +626,16 @@ def run():
             tune.report(test=1, rank=hvd.rank())
 
         trainable = DistributedTrainableCreator(
-                training_function, num_slots=4, use_gpu=True)
+                training_function, num_workers=4, use_gpu=True)
 
         config_ray = copy.deepcopy(config)
         config_ray["initial_lr"] = tune.uniform(0.0001, 0.1)
         config_ray["decay_epcohs"] = tune.uniform(1.0, 4.0)
         config_ray["batch_size"] = tune.randint(2, 32)
+        config_ray["t_mul"] = tune.uniform(0.5, 4.0)
+        config_ray["m_mul"] = tune.uniform(0.5, 4.0)
 
-        results = tune.run(training_function, config=config, name="horovod", metric="mean_loss", mode="min", search_alg=algo)
+        results = tune.run(trainable, config=config, name="horovod", metric="mean_loss", mode="min", search_alg=algo)
         print(results.best_config)
 
     elif args.mode == "finetune": # train
@@ -629,36 +645,43 @@ def run():
 
         if config is not None and config["grad_accum_steps"] > 1:
             model_builder = lambda x, y: GAModel(
-                config["training_conf"]["use_amp"],
-                config["training_conf"]["hvd_fp16_compression"],
-                config["training_conf"]["grad_clip_norm"],
-                config["training_conf"]["grad_accum_steps"],
+                config["use_amp"],
+                config["hvd_fp16_compression"],
+                config["grad_clip_norm"],
+                config["grad_accum_steps"],
                 x, y
                 )
         else:
             model_builder = None
 
         model = model_path_based_load(args.dataset, args.model_path, model_handler)
+        # position_mode must be str
+        import json
+        with open(args.position_mode, "r") as f: 
+            positions = json.load(f)
+        position_set = set(positions)
+
         if config["use_amp"]:
             tf.keras.backend.set_floatx("float16")
             from tensorflow.keras import mixed_precision
             mixed_precision.set_global_policy('mixed_float16')
-            model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=distill_set)
+            model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=position_set)
 
         if args.model_path2 is not None:
             teacher = model_path_based_load(args.dataset, args.model_path2, model_handler)
             if config["use_amp"]:
-                teacher = change_dtype(teacher, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=distill_set)
+                teacher = change_dtype(teacher, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=position_set)
 
-            # position_mode must be str
-            import json
-            with open(args.position_mode, "r") as f: 
-                positions = json.load(f)["data"]
+            from nncompress.backend.tensorflow_.transformation import unfold
+            teacher = unfold(teacher)
 
             model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
             model = make_distiller(model, teacher, positions=positions, scale=0.1, model_builder=model_builder)
+            config["mode"] = "distillation_label_free"
+        else:
+            config["mode"] = "finetune"
 
-        train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir, conf=config, teacher=teacher)
+        train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir, conf=config)
     elif args.mode == "prune":
 
         iter_dir = save_dir+"/pruning_steps"

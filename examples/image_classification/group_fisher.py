@@ -14,6 +14,8 @@ from numba import njit
 from numpy import dot
 from numpy.linalg import norm as npnorm
 
+import horovod.tensorflow as hvd
+
 from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser, NNParser
 from nncompress.backend.tensorflow_ import SimplePruningGate, DifferentiableGate
 from nncompress.backend.tensorflow_.transformation import parse, inject, cut, unfold
@@ -30,20 +32,33 @@ def find_all(model, Target):
                 ret.append(layer)
     return ret
 
-def get_num_all_channels(groups):
-    sum_ = 0
-    for gidx, group in enumerate(groups):
-        g = group[0]
-        sum_ += g.ngates
-    return sum_
-
-def compute_sparsity(groups):
+def compute_sparsity(groups, l2g, gmodel):
     sum_ = 0
     alive = 0
     for gidx, group in enumerate(groups):
-        g = group[0]
-        sum_ += g.ngates
-        alive += np.sum(g.gates.numpy())
+        if type(group) == dict:
+            # size, denominator
+            items = []
+            max_ = 0
+            for key, val in group.items():
+                if type(key) == str:
+                    val = sorted(val, key=lambda x:x[0])
+                    items.append((key, val))
+                    for v in val:
+                        if v[1] > max_:
+                            max_ = v[1]
+            sum_ += max_
+            mask = np.zeros((max_,))
+            for key, val in items:
+                gate = gmodel.get_layer(l2g[key])
+                for v in val:
+                    mask[v[0]:v[1]] += gate.gates.numpy()
+            mask = (mask >= 1.0).astype(np.float32)
+            alive += np.sum(mask)
+        else:
+            g = group[0]
+            sum_ += g.ngates
+            alive += np.sum(g.gates.numpy())
     return 1.0 - alive / sum_
 
 @njit
@@ -86,6 +101,24 @@ def compute_act(layer, batch_size, pruning_input_gate=False, out_gate=None):
         else:
             return 0.0
 
+def flatten(group):
+    ret = []
+    if type(group) == str:
+        return [group]
+    else:
+        for g in group:
+            ret += flatten(g)
+    return ret
+
+def extract_parents(p):
+    ret = []
+    if type(p) != frozenset and type(p[0]) == str:
+        return [p[0]]
+    else:
+        for g in p:
+            ret += extract_parents(g)
+    return ret
+   
 
 def add_gates(model, custom_objects=None, avoid=None):
 
@@ -118,8 +151,11 @@ def add_gates(model, custom_objects=None, avoid=None):
     groups_ = parser.get_sharing_groups()
     ordered_groups = []
     for g in groups_:
-        ###
-        g_ = sorted(list(g), key=lambda x: torder[x])
+        ### flatten
+        g_flatten = flatten(g)
+
+        g_ = sorted(list(g_flatten), key=lambda x: torder[x])
+        #g_ = sorted(list(g), key=lambda x: torder[x])
         ordered_groups.append((g, torder[g_[0]]))
         ###
         #ordered_groups.append((g, torder[g_[0]]))
@@ -172,7 +208,8 @@ def compute_positions(model, ordered_groups, torder, parser, position_mode, num_
         for i, (g, idx) in enumerate(ordered_groups):
 
             #des = parser.first_common_descendant(list(g), joints)
-            des = parser.first_common_descendant(list(g), convs)
+            g_flatten = flatten(g)
+            des = parser.first_common_descendant(list(g_flatten), convs)
             blocks[current_id].append((g, des))
             if len(blocks[current_id]) >= len(ordered_groups) // num_blocks and current_id != num_blocks-1:
                 current_id += 1
@@ -205,7 +242,7 @@ def compute_positions(model, ordered_groups, torder, parser, position_mode, num_
                 act = parser.get_first_activation(b[-1][0][0]) # last layer.
             else:
                 act = parser.get_first_activation(b[-1][1])
-            if act not in positions:
+            if act not in positions and act is not None:
                 positions.append(act)
 
     elif position_mode == 2: # random
@@ -384,10 +421,18 @@ def compute_norm(parser, gate_mapping, gmodel, batch_size, targets, groups, inv_
         if child_gate not in parents:
             parents[child_gate] = []
         for p in parents_:
-            if gmodel.get_layer(p[0]).__class__.__name__ not in ["Conv2D", "Dense"]:
-                continue
-            parent_gate = l2g[p[0]]
-            parents[child_gate].append(parent_gate)
+            if type(p[0]) == frozenset:
+                for pname in extract_parents(p):
+                    if gmodel.get_layer(pname).__class__.__name__ not in ["Conv2D", "Dense"]:
+                        continue
+                    parent_gate = l2g[pname]
+                    parents[child_gate].append(parent_gate)
+            else:
+                pname = p[0]
+                if gmodel.get_layer(pname).__class__.__name__ not in ["Conv2D", "Dense"]:
+                    continue
+                parent_gate = l2g[pname]
+                parents[child_gate].append(parent_gate)
 
     for key in norm:
         norm[key] = compute_act(gmodel.get_layer(g2l[key]), batch_size)
@@ -418,13 +463,21 @@ def compute_norm(parser, gate_mapping, gmodel, batch_size, targets, groups, inv_
                 continue
 
             for l in groups[cgidx]:
-                out_gate = gmodel.get_layer(l.name).gates.numpy()
-                gnorm[gidx] += compute_act(gmodel.get_layer(g2l[l.name]), batch_size, pruning_input_gate=True, out_gate=out_gate)
+                if type(groups[cgidx]) == dict:
+                    if type(l) == str:
+                        gnorm[gidx] += compute_act(gmodel.get_layer(l), batch_size, pruning_input_gate=True, out_gate=out_gate)
+                else:
+                    out_gate = gmodel.get_layer(l.name).gates.numpy()
+                    gnorm[gidx] += compute_act(gmodel.get_layer(g2l[l.name]), batch_size, pruning_input_gate=True, out_gate=out_gate)
 
     final_norm = [0 for _ in range(len(groups))]
     for gidx in range(len(groups)):
         for l in groups[gidx]:
-            final_norm[gidx] += norm[l.name]
+            if type(groups[cgidx]) == dict:
+                if type(l) == str:
+                    final_norm[gidx] += norm[l2g[l]]
+            else:
+                final_norm[gidx] += norm[l.name]
         final_norm[gidx] += gnorm[gidx]
 
     for gidx in range(len(final_norm)):
@@ -588,9 +641,9 @@ class PruningCallback(keras.callbacks.Callback):
         ]
 
 
-    def on_train_batch_end(self, batch, logs=None, pbar=None):
+    def on_train_batch_end(self, batch, logs=None, pbar=None, model_=None):
         self._iter += 1
-        if self._iter % self.period == 0 and self.continue_pruning:
+        if self._iter % (self.period // hvd.size()) == 0 and self.continue_pruning:
 
             if self.compute_norm_func is not None:
                 self.norm, parents, g2l, contributors = self.compute_norm_func()
@@ -605,22 +658,53 @@ class PruningCallback(keras.callbacks.Callback):
             cscore_ = {}
             for gidx, group in enumerate(groups):
 
-                # compute grad based si
-                num_batches = len(group[0].grad_holder)
-                sum_ = 0
-                cscore = None
-                for bidx in range(num_batches):
-                    grad = 0
-                    for lidx, layer in enumerate(group):
-                        gates_ = layer.gates.numpy()
-                        grad += layer.grad_holder[bidx]
+                if type(group) == dict:
+                    for l in group:
+                        if type(l) == str:
+                            num_batches = len(self.gmodel.get_layer(self.l2g[l]).grad_holder)
+                            break
 
-                    if type(grad) == int and grad == 0:
-                        continue
+                    items = []
+                    max_ = 0
+                    for key, val in group.items():
+                        if type(key) == str:
+                            val = sorted(val, key=lambda x:x[0])
+                            items.append((key, val))
+                            for v in val:
+                                if v[1] > max_:
+                                    max_ = v[1]
+                    sum_ = np.zeros((max_,))
+                    cscore = None
+                    for bidx in range(num_batches):
+                        for key, val in items:
+                            gate = self.gmodel.get_layer(self.l2g[key])
+                            grad = gate.grad_holder[bidx]
+                            if type(grad) == int and grad == 0:
+                                continue
 
-                    grad = pow(grad, 2)
-                    sum_ += tf.reduce_sum(grad, axis=0)
-                    cscore = 0.0
+                            grad = pow(grad, 2)
+                            grad = tf.reduce_sum(grad, axis=0)
+                            for v in val:
+                                sum_[v[0]:v[1]] += grad
+
+                        cscore = 0.0
+                else:
+                    # compute grad based si
+                    num_batches = len(group[0].grad_holder)
+
+                    sum_ = 0
+                    cscore = None
+                    for bidx in range(num_batches):
+                        grad = 0
+                        for lidx, layer in enumerate(group):
+                            grad += layer.grad_holder[bidx]
+
+                        if type(grad) == int and grad == 0:
+                            continue
+
+                        grad = pow(grad, 2)
+                        sum_ += tf.reduce_sum(grad, axis=0)
+                        cscore = 0.0
 
                 # compute normalization
                 if cscore is not None: # To handle cscore is undefined.
@@ -640,13 +724,34 @@ class PruningCallback(keras.callbacks.Callback):
             filtered = set()
             if self.enable_distortion_detect:
                 indices = set()
+
+            to_update = {}
             for __ in range(self.num_remove):
                 min_val = -1
                 min_idx = (-1, -1)
                 for gidx, group in enumerate(groups):
 
                     cscore = cscore_[gidx]
-                    gates_ = group[0].gates.numpy()
+                    if type(group) == dict:
+                        items = []
+                        max_ = 0
+                        for key, val in group.items():
+                            if type(key) == str:
+                                val = sorted(val, key=lambda x:x[0])
+                                items.append((key, val))
+                                for v in val:
+                                    if v[1] > max_:
+                                        max_ = v[1]
+                        mask = np.zeros((max_,))
+                        for key, val in items:
+                            gate = self.gmodel.get_layer(self.l2g[key])
+                            for v in val:
+                                mask[v[0]:v[1]] += gate.gates.numpy()
+                        gates_ = (mask >= 1.0).astype(np.float32)
+
+                    else:
+                        gates_ = group[0].gates.numpy()
+
                     if np.sum(gates_) < 2.0:
                         continue
                     if cscore is not None:
@@ -657,10 +762,26 @@ class PruningCallback(keras.callbacks.Callback):
 
                 filtered.add(min_idx)
                 min_group = groups[min_idx[0]]
-                for min_layer in min_group:
-                    gates_ = min_layer.gates.numpy()
-                    gates_[min_idx[1]] = 0.0
-                    min_layer.gates.assign(gates_)
+                if type(min_group) != dict:
+                    for min_layer in min_group:
+                        gates_ = min_layer.gates.numpy()
+                        gates_[min_idx[1]] = 0.0
+                        min_layer.gates.assign(gates_)
+                        if min_layer.gates.name not in to_update:
+                            to_update[min_layer.gates.name] = min_layer.gates
+                else:
+                    for key, val in min_group.items():
+                        if type(key) == str:
+                            val = sorted(val, key=lambda x:x[0])
+                            gate = self.gmodel.get_layer(self.l2g[key])
+                            for v in val:
+                                if v[0] <= min_idx[1] and min_idx[1] < v[1]:
+                                    gates_ = gate.gates.numpy()
+                                    gates_[min_idx[1] - v[0]] = 0.0
+                                    gate.gates.assign(gates_)
+                                    if gate.gates.name not in to_update:
+                                        to_update[gate.gates.name] = gate.gates
+
                 num_removed_channels += 1
                 self._num_removed += 1
 
@@ -724,10 +845,26 @@ class PruningCallback(keras.callbacks.Callback):
                 if exit: # restore the last removed channel                    
                     for min_idx_ in filtered:
                         min_group = groups[min_idx_[0]]
-                        for min_layer in min_group:
-                            gates_ = min_layer.gates.numpy()
-                            gates_[min_idx_[1]] = 1.0
-                            min_layer.gates.assign(gates_)
+
+                        if type(min_group) != dict:
+                            for min_layer in min_group:
+                                gates_ = min_layer.gates.numpy()
+                                gates_[min_idx_[1]] = 1.0
+                                min_layer.gates.assign(gates_)
+                                if min_layer.gates.name not in to_update:
+                                    to_update[min_layer.gates.name] = min_layer.gates
+                        else:
+                            for key, val in min_group.items():
+                                if type(key) == str:
+                                    val = sorted(val, key=lambda x:x[0])
+                                    gate = self.gmodel.get_layer(self.l2g[key])
+                                    for v in val:
+                                        if v[0] <= min_idx[1] and min_idx[1] < v[1]:
+                                            gates_ = gate.gates.numpy()
+                                            gates_[min_idx[1] - v[0]] = 1.0
+                                            gate.gates.assign(gates_)
+                                            if gate.gates.name not in to_update:
+                                                to_update[gate.gates.name] = gate.gates
 
                         self._num_removed -= 1
                         num_removed_channels -= 1
@@ -778,10 +915,14 @@ class PruningCallback(keras.callbacks.Callback):
                 if self.callback_after_deletion is not None:
                    self.callback_after_deletion(self._num_removed)
 
-                if compute_sparsity(groups) >= self.target_ratio:
+                if compute_sparsity(groups, self.l2g, self.gmodel) >= self.target_ratio:
                     break
 
-            self.continue_pruning = compute_sparsity(groups) < self.target_ratio
+            if hvd.size() > 1:
+                to_update_  = [to_update[key] for key in to_update]
+                hvd.broadcast_variables(model_.variables, root_rank=0)
+
+            self.continue_pruning = compute_sparsity(groups, self.l2g, self.gmodel) < self.target_ratio
             for layer in self.targets:
                 layer.grad_holder = []
                 if not self.continue_pruning:
@@ -793,7 +934,7 @@ class PruningCallback(keras.callbacks.Callback):
             ]
 
             if pbar is not None:
-                pbar.set_postfix({"Sparsity":compute_sparsity(groups), "Num removed(last step)":num_removed_channels})
+                pbar.set_postfix({"Sparsity":compute_sparsity(groups, self.l2g, self.gmodel), "Num removed(last step)":num_removed_channels})
 
             # for fit
             if not self.continue_pruning and hasattr(self, "model") and hasattr(self.model, "stop_training"):
@@ -802,6 +943,12 @@ class PruningCallback(keras.callbacks.Callback):
             return num_removed_channels
         else:
             return 0
+
+def is_simple_group(g):
+    for l in g:
+        if type(l) != str:
+            return False
+    return True
 
 def make_group_fisher(model,
                       model_handler,
@@ -825,16 +972,26 @@ def make_group_fisher(model,
 
     groups = []
     for g, _ in ordered_groups:
-        gate_group = []
-        for l in g:
-            gate_group.append(gmodel.get_layer(l2g[l]))
-        groups.append(gate_group)
+        if is_simple_group(g):
+            gate_group = []
+            for l in g:
+                gate_group.append(gmodel.get_layer(l2g[l]))
+            groups.append(gate_group)
+        else:
+            g_ = flatten(g)
+            _, group_struct = parser.get_group_topology(g_)
+            groups.append(group_struct[0]) # g_ must be a single group
 
     inv_groups = {}
     for idx, g in enumerate(groups):
-        for l in g:
-            inv_groups[l.name] = idx 
-
+        if type(g) == list:
+            for l in g:
+                inv_groups[l.name] = idx 
+        else:
+            for key in g:
+                if type(key) == str:
+                    inv_groups[l2g[key]] = idx
+            
     # Compute normalization score
     if enable_norm:
         norm, parents, g2l, contributors = compute_norm(parser, gate_mapping, gmodel, batch_size, targets, groups, inv_groups, l2g)
@@ -845,7 +1002,7 @@ def make_group_fisher(model,
         }
 
     def callback_after_deletion_(num_removed):
-        if num_removed % save_steps == 0:
+        if num_removed % save_steps == 0 and hvd.rank() == 0:
             assert save_dir is not None
             assert save_prefix is not None
             cmodel = parser.cut(gmodel)
@@ -889,8 +1046,10 @@ def prune_step(X, model, teacher_logits, y, pc, print_by_pruning, pbar=None):
                 layer.collecting = True
 
         tape, loss, position_output = train_step(X, model, teacher_logits, y, ret_last_tensor=True)
+        tape = hvd.DistributedGradientTape(tape)
         _ = tape.gradient(loss, model.trainable_variables)
-        ret = pc.on_train_batch_end(None, pbar=pbar)
+
+        ret = pc.on_train_batch_end(None, pbar=pbar, model_=model)
 
         if pc.enable_distortion_detect:
             for idx in range(len(pc.subnets)):

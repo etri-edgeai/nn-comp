@@ -296,7 +296,8 @@ def preprocess_for_eval(
     num_channels: int = 3,
     mean_subtract: bool = False,
     standardize: bool = False,
-    dtype: tf.dtypes.DType = tf.float32
+    dtype: tf.dtypes.DType = tf.float32,
+    prep_func = None
 ) -> tf.Tensor:
   """Preprocesses the given image for evaluation.
 
@@ -337,7 +338,10 @@ def preprocess_for_eval(
   #images = tf.keras.preprocessing.image.smart_resize(images, [256, 256], interpolation='bicubic')
   #images = _central_crop([images], 224, 224)[0]
 
-  images = center_crop_and_resize(images, image_size)
+  if prep_func is None:
+    images = center_crop_and_resize(images, image_size)
+  else:
+    images = prep_func(images)
 
   #if mean_subtract:
   #  images = mean_image_subtraction(image_bytes=images, means=MEAN_RGB)
@@ -479,7 +483,8 @@ def preprocess_for_train(images: tf.Tensor,
                          augmenter: Optional[augment.ImageAugment] = None,
                          mean_subtract: bool = False,
                          standardize: bool = False,
-                         dtype: tf.dtypes.DType = tf.float32) -> tf.Tensor:
+                         dtype: tf.dtypes.DType = tf.float32,
+                         prep_func = None) -> tf.Tensor:
   """Preprocesses the given image for training.
 
   Args:
@@ -508,7 +513,11 @@ def preprocess_for_train(images: tf.Tensor,
   #images = tf.keras.preprocessing.image.smart_resize(images, [256, 256], interpolation='bicubic')
   #images = _central_crop([images], 224, 224)[0]
 
-  images = center_crop_and_resize(images, image_size)
+  #images = center_crop_and_resize(images, image_size)
+  if prep_func is None:
+    images = center_crop_and_resize(images, image_size)
+  else:
+    images = prep_func(images)
 
   if mean_subtract:
     images = mean_image_subtraction(image_bytes=images, means=MEAN_RGB)
