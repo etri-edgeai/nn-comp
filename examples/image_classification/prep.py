@@ -105,7 +105,7 @@ def add_augmentation(model, image_size, train_batch_size=32, do_mixup=False, do_
 
     to_removed_names = []
     to_removed = []
-    if update_batch_size:
+    if found and update_batch_size:
 
         new_layer = None
         for layer in temp_model_dict["config"]["layers"]:
