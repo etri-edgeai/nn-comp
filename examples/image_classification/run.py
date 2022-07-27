@@ -658,11 +658,15 @@ def run():
             model_builder = None
 
         model = model_path_based_load(args.dataset, args.model_path, model_handler)
-        # position_mode must be str
-        import json
-        with open(args.position_mode, "r") as f: 
-            positions = json.load(f)
-        position_set = set(positions)
+
+        if args.model_path2 is not None:
+            # position_mode must be str
+            import json
+            with open(args.position_mode, "r") as f: 
+                positions = json.load(f)
+            position_set = set(positions)
+        else:
+            position_set = None
 
         if config["use_amp"]:
             tf.keras.backend.set_floatx("float16")
@@ -671,6 +675,7 @@ def run():
             model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=position_set)
 
         if args.model_path2 is not None:
+
             teacher = model_path_based_load(args.dataset, args.model_path2, model_handler)
             if config["use_amp"]:
                 teacher = change_dtype(teacher, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=position_set)
