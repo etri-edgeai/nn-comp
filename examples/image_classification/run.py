@@ -662,11 +662,15 @@ def run():
             model_builder = None
 
         model = model_path_based_load(args.dataset, args.model_path, model_handler)
-        # position_mode must be str
-        import json
-        with open(args.position_mode, "r") as f: 
-            positions = json.load(f)
-        position_set = set(positions)
+
+        if args.model_path2 is not None:
+            # position_mode must be str
+            import json
+            with open(args.position_mode, "r") as f: 
+                positions = json.load(f)
+            position_set = set(positions)
+        else:
+            position_set = None
 
         if config["use_amp"]:
             tf.keras.backend.set_floatx("float16")
@@ -675,6 +679,7 @@ def run():
             model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=position_set)
 
         if args.model_path2 is not None:
+
             teacher = model_path_based_load(args.dataset, args.model_path2, model_handler)
             if config["use_amp"]:
                 teacher = change_dtype(teacher, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=position_set)
@@ -686,6 +691,7 @@ def run():
             model = make_distiller(model, teacher, positions=positions, scale=0.1, model_builder=model_builder)
             config["mode"] = "distillation_label_free"
         else:
+            model = add_augmentation(model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
             config["mode"] = "finetune"
 
         train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir, conf=config)
