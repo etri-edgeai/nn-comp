@@ -4,6 +4,8 @@ import tensorflow as tf
 from numba import jit
 from tqdm import tqdm
 
+from prep import add_augmentation, change_dtype
+
 @jit
 def find_min(score, gates_info, n_channels_group, n_removed_group, ngates):
     idx = 0
@@ -37,7 +39,7 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
         if record_id > 1:
             break
         data.append(X)
-        ty.append(teacher(X)[0]) # the first output of teacher is the output logit.
+        ty.append(teacher(X, training=False)[0]) # the first output of teacher is the output logit.
         record_id += 1
 
     print("scoring...")
@@ -68,7 +70,7 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
 
             sum_ = 0.0
             for X, ty_output in zip(data, ty):
-                student_logits = gated_model(X)
+                student_logits = gated_model(X, training=False)
                 sum_ += tf.math.reduce_mean(tf.keras.losses.kl_divergence(student_logits[0], ty_output))
             score[local_base + lidx] = float(sum_)
 
