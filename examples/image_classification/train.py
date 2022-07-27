@@ -7,6 +7,8 @@ from tensorflow import keras
 import tensorflow as tf
 import tensorflow_datasets as tfds
 
+import random
+
 from dataloader import dataset_factory
 from utils import callbacks as custom_callbacks
 from utils import optimizer_factory
@@ -20,13 +22,6 @@ from prep import add_augmentation
 epochs = 50
 
 def load_data_nvidia(dataset, model_handler, sampling_ratio=1.0, training_augment=True, batch_size=-1, n_classes=100, cutmix_alpha=1.0, mixup_alpha=0.8):
-
-    if dataset == "imagenet2012":
-        data_dir = "tensorflow_datasets/imagenet2012/5.1.0_dali"
-    elif dataset == "cifar100":
-        data_dir = "tensorflow_datasets/cifar100/3.0.2_dali"
-    else:
-        raise NotImplementedError("no support for the other datasets")
 
     dim = (model_handler.height, model_handler.width)
 
@@ -100,15 +95,22 @@ def load_dataset(dataset, model_handler, sampling_ratio=1.0, training_augment=Tr
 
     batch_size = model_handler.get_batch_size(dataset)
 
-    if dataset in ["imagenet2012", "cifar100"]:
+    if dataset in ["imagenet2012", "cifar100", "caltech_birds2011", "oxford_iiit_pet"]:
         train_data_generator, valid_data_generator = load_data_nvidia(dataset, model_handler, sampling_ratio=sampling_ratio, training_augment=training_augment, n_classes=n_classes)
 
         if dataset == "imagenet2012": 
             num_train_examples = 1281167
             num_val_examples = 50000
-        else:
+        elif dataset == "cifar100":
             num_train_examples = 50000
             num_val_examples = 10000
+        elif dataset == "caltech_birds2011":
+            num_train_examples = 5994
+            num_val_examples = 5794
+        else:
+            num_train_examples = 3680
+            num_val_examples = 3669
+
         iters = num_train_examples // (batch_size * hvd.size())
         iters_val = num_val_examples // (batch_size * hvd.size())
         test_data_generator = valid_data_generator
@@ -285,14 +287,22 @@ def train_step(X, model, teacher_logits=None, y=None, ret_last_tensor=False):
                 if loss is None:
                     loss = temp
                 else:
+                    if loss.dtype != temp.dtype:
+                        temp = tf.cast(temp, loss.dtype)
                     loss += temp
 
             if loss is None: # empty position case
                 loss = tf.math.reduce_mean(tf.keras.losses.kl_divergence(logits[0], teacher_logits[0])) # model's output logit
             else:
-                loss += tf.math.reduce_mean(tf.keras.losses.kl_divergence(logits[0], teacher_logits[0])) # model's output logit
+                temp_ = tf.math.reduce_mean(tf.keras.losses.kl_divergence(logits[0], teacher_logits[0])) # model's output logit
+                if loss.dtype != temp_.dtype:
+                    temp_ = tf.cast(temp_, loss.dtype)
+                loss += temp_
             if y is not None:
-                loss += tf.math.reduce_mean(tf.keras.losses.categorical_crossentropy(logits[0], y))
+                temp_ = tf.math.reduce_mean(tf.keras.losses.categorical_crossentropy(logits[0], y))
+                if loss.dtype != temp_.dtype:
+                    temp_ = tf.cast(temp_, loss.dtype)    
+                loss += temp_
         else:
             assert y is not None
             loss = tf.math.reduce_mean(tf.keras.losses.categorical_crossentropy(logits[0], y))

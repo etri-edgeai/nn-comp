@@ -585,7 +585,7 @@ class NNParser(object):
 
         return input_leaves, output_leaves
 
-    def get_subnet(self, block, model, in_target_shapes=None, out_target_shapes=None, use_adapter=False):
+    def get_subnet(self, block, model, in_target_shapes=None, out_target_shapes=None, use_adapter=False, custom_objects=None):
         # block: list of names
         block_set = set([l.name for l in block])
         inputs, outputs = self.get_leaves(block)
@@ -704,7 +704,7 @@ class NNParser(object):
         output_model = keras.Model(inputs=inputs_, outputs=outputs_)
 
         json_ = output_model.to_json()
-        output_model_ = tf.keras.models.model_from_json(json_)
+        output_model_ = tf.keras.models.model_from_json(json_, custom_objects=custom_objects)
         output_model_.set_weights(output_model.get_weights())
         return output_model_, inputs, outputs
 
