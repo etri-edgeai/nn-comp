@@ -7,6 +7,8 @@ from tensorflow import keras
 import tensorflow as tf
 import tensorflow_datasets as tfds
 
+import random
+
 from dataloader import dataset_factory
 from utils import callbacks as custom_callbacks
 from utils import optimizer_factory
@@ -285,14 +287,22 @@ def train_step(X, model, teacher_logits=None, y=None, ret_last_tensor=False):
                 if loss is None:
                     loss = temp
                 else:
+                    if loss.dtype != temp.dtype:
+                        temp = tf.cast(temp, loss.dtype)
                     loss += temp
 
             if loss is None: # empty position case
                 loss = tf.math.reduce_mean(tf.keras.losses.kl_divergence(logits[0], teacher_logits[0])) # model's output logit
             else:
-                loss += tf.math.reduce_mean(tf.keras.losses.kl_divergence(logits[0], teacher_logits[0])) # model's output logit
+                temp_ = tf.math.reduce_mean(tf.keras.losses.kl_divergence(logits[0], teacher_logits[0])) # model's output logit
+                if loss.dtype != temp_.dtype:
+                    temp_ = tf.cast(temp_, loss.dtype)
+                loss += temp_
             if y is not None:
-                loss += tf.math.reduce_mean(tf.keras.losses.categorical_crossentropy(logits[0], y))
+                temp_ = tf.math.reduce_mean(tf.keras.losses.categorical_crossentropy(logits[0], y))
+                if loss.dtype != temp_.dtype:
+                    temp_ = tf.cast(temp_, loss.dtype)    
+                loss += temp_
         else:
             assert y is not None
             loss = tf.math.reduce_mean(tf.keras.losses.categorical_crossentropy(logits[0], y))
