@@ -6,10 +6,23 @@ import json
 from numba import jit
 from tqdm import tqdm
 
+from group_fisher import is_simple_group, flatten
+
 def apply_hrank(train_data_generator, teacher, gated_model, groups, l2g, parser, target_ratio, gf_model):
 
+    groups_ = []
+    for g, _ in groups:
+        if is_simple_group(g):
+            groups_.append((g, _))
+        else:
+            g_ = flatten(g)
+            for _g in g_:
+                groups_.append((_g, None))
+    groups = groups_
+
     convs = [
-        layer for layer in teacher.layers if layer.__class__.__name__ == "Conv2D"
+        layer for layer in teacher.layers if layer.__class__.__name__ == "Conv2D" and parser.get_first_activation(layer.name) != None and\
+            teacher.get_layer(parser.get_first_activation(layer.name)).output.shape[-1] == layer.filters
     ]
 
     acts = {
@@ -45,12 +58,26 @@ def apply_hrank(train_data_generator, teacher, gated_model, groups, l2g, parser,
                 for channel_idx in range(int(feat_map.shape[-1])):
                     # compute rank.
                     feat_mat = feat_map[:,:,:,channel_idx]
+                    print(channel_idx, len(score[layer.name]), feat_map.shape)
                     score[layer.name][channel_idx] += tf.math.reduce_sum(
                         tf.linalg.matrix_rank(
                             feat_mat, tol=None
                             )
                     )
 
+    # filter meaningless groups
+    removal = set()
+    for gidx, (g, _) in enumerate(groups):
+        for layer in g:
+            if layer not in score:
+                removal.add(gidx)
+                break
+    groups_ = []
+    for gidx, (g, _) in enumerate(groups):
+        if gidx not in removal:
+            groups_.append((g, _))
+    groups = groups_
+        
     n_channels = 0
     gscore = [
         None for _ in groups
