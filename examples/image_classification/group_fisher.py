@@ -19,6 +19,7 @@ import horovod.tensorflow as hvd
 from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser, NNParser
 from nncompress.backend.tensorflow_ import SimplePruningGate, DifferentiableGate
 from nncompress.backend.tensorflow_.transformation import parse, inject, cut, unfold
+from nncompress.backend.tensorflow_.transformation.pruning_parser import StopGradientLayer
 
 from train import train_step
 
@@ -548,7 +549,7 @@ class PruningCallback(keras.callbacks.Callback):
                 _g = positions[idx-1:idx+1]
 
             if custom_objects is None:
-                custom_objects = {"SimplePruningGate":SimplePruningGate}
+                custom_objects = {"SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer}
             parser_ = NNParser(self.gmodel, custom_objects=custom_objects)
             parser_.parse()
 
@@ -631,7 +632,7 @@ class PruningCallback(keras.callbacks.Callback):
                 if idx not in self.inv_l2s[l.name]:
                     self.inv_l2s[l.name].append(idx)
 
-            subnet, inputs, outputs = parser_.get_subnet(__g_instance, self.gmodel)
+            subnet, inputs, outputs = parser_.get_subnet(__g_instance, self.gmodel, custom_objects=custom_objects)
             #tf.keras.utils.plot_model(subnet, "subnet"+str(idx)+".png")
             self.subnets.append((subnet, inputs, outputs))
 
