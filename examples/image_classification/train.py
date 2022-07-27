@@ -21,13 +21,6 @@ epochs = 50
 
 def load_data_nvidia(dataset, model_handler, sampling_ratio=1.0, training_augment=True, batch_size=-1, n_classes=100, cutmix_alpha=1.0, mixup_alpha=0.8):
 
-    if dataset == "imagenet2012":
-        data_dir = "tensorflow_datasets/imagenet2012/5.1.0_dali"
-    elif dataset == "cifar100":
-        data_dir = "tensorflow_datasets/cifar100/3.0.2_dali"
-    else:
-        raise NotImplementedError("no support for the other datasets")
-
     dim = (model_handler.height, model_handler.width)
 
     if batch_size == -1:
@@ -100,15 +93,22 @@ def load_dataset(dataset, model_handler, sampling_ratio=1.0, training_augment=Tr
 
     batch_size = model_handler.get_batch_size(dataset)
 
-    if dataset in ["imagenet2012", "cifar100"]:
+    if dataset in ["imagenet2012", "cifar100", "caltech_birds2011", "oxford_iiit_pet"]:
         train_data_generator, valid_data_generator = load_data_nvidia(dataset, model_handler, sampling_ratio=sampling_ratio, training_augment=training_augment, n_classes=n_classes)
 
         if dataset == "imagenet2012": 
             num_train_examples = 1281167
             num_val_examples = 50000
-        else:
+        elif dataset == "cifar100":
             num_train_examples = 50000
             num_val_examples = 10000
+        elif dataset == "caltech_birds2011":
+            num_train_examples = 5994
+            num_val_examples = 5794
+        else:
+            num_train_examples = 3680
+            num_val_examples = 3669
+
         iters = num_train_examples // (batch_size * hvd.size())
         iters_val = num_val_examples // (batch_size * hvd.size())
         test_data_generator = valid_data_generator
