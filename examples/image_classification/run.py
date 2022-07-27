@@ -201,9 +201,13 @@ def prune(
         backup = model_handler.batch_size
         model_handler.batch_size = 256
         (train_data_generator_, _, _), (_, _)  = load_dataset(dataset, model_handler, training_augment=False, n_classes=n_classes)
-        model_handler.batch_size = backup
+        copied_model = add_augmentation(copied_model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
+        gmodel = add_augmentation(gmodel, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
         gf_model= model_path_based_load(dataset, model_path2, model_handler)
         apply_hrank(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio, gf_model)
+        cmodel = parser.cut(gmodel)
+        tf.keras.models.save_model(cmodel, save_dir+"/"+model_handler.get_name()+postfix+"_untrained_.h5")
+        tf.keras.models.save_model(gmodel, save_dir+"/"+model_handler.get_name()+postfix+"_untrained_gated.h5")
 
     elif method == "l2":
 
