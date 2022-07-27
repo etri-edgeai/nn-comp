@@ -141,6 +141,10 @@ def prune(
     lr_mode=0):
 
     start_time = time.time()
+    custom_object_scope = {
+        "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer
+    }
+
 
     if type(position_mode) != int:
         pos_str = "custom"
@@ -186,7 +190,9 @@ def prune(
         backup = model_handler.batch_size
         model_handler.batch_size = 256
         (train_data_generator_, _, _), (_, _) = load_dataset(dataset, model_handler, training_augment=False, n_classes=n_classes)
-        model_handler.batch_size = backup
+        copied_model = add_augmentation(copied_model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
+        gmodel = add_augmentation(gmodel, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
+        #model_handler.batch_size = backup
         apply_curl(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio, save_dir+"/pruning_steps", model_handler.get_name()+postfix, save_steps=save_steps)
 
     elif method == "hrank":
@@ -294,9 +300,6 @@ def prune(
         #print(validate(cmodel))
 
     if distillation:
-        custom_object_scope = {
-            "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer
-        }
         if model_handler.get_custom_objects() is not None:
             for key, val in model_handler.get_custom_objects().items():
                 custom_object_scope[key] = val
@@ -695,7 +698,8 @@ def run():
             model_path = args.model_path
 
         model = model_path_based_load(args.dataset, model_path, model_handler)
-        model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
+        if method not in ["curl"]:
+            model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
 
         prune(
             dataset,

@@ -62,14 +62,14 @@ def get_custom_objects():
     return custom_objects
 
 
-def add_augmentation(model, image_size, train_batch_size=32, do_mixup=False, do_cutmix=False, custom_objects=None):
+def add_augmentation(model, image_size, train_batch_size=32, do_mixup=False, do_cutmix=False, custom_objects=None, update_batch_size=False):
 
     found = False
     for l in model.layers:
         if l.name == "mixup_weight":
             found = True
             break
-    if found:
+    if found and not update_batch_size:
         return model
 
     if type(model) == keras.Sequential:
@@ -105,26 +105,39 @@ def add_augmentation(model, image_size, train_batch_size=32, do_mixup=False, do_
 
     to_removed_names = []
     to_removed = []
-    for layer in model_dict["config"]["layers"]:
-        if layer["class_name"] == "InputLayer":
-            to_removed_names.append(layer["config"]["name"])
-            to_removed.append(layer)
+    if update_batch_size:
 
-    for layer in model_dict["config"]["layers"]:
-        for inbound in layer["inbound_nodes"]:
-            if type(inbound[0]) == str:
-                if inbound[0] in to_removed_names:
-                    inbound[0] = "input_lambda"
-            else:
-                for ib in inbound:
-                    if ib[0] in to_removed_names: # input
-                        ib[0] = "input_lambda"
+        new_layer = None
+        for layer in temp_model_dict["config"]["layers"]:
+            if layer["name"] == "input_lambda":
+                new_layer = layer
+                break
 
-    for r in to_removed:
-        model_dict["config"]["layers"].remove(r)
+        for layer in model_dict["config"]["layers"]:
+            if layer["name"] == "input_lambda":
+                layer["config"] = new_layer["config"] # replace
+    else:
 
-    model_dict["config"]["layers"] +=  temp_model_dict["config"]["layers"]
-    model_dict["config"]["input_layers"] = [[layer.name, 0, 0] for layer in inputs]
+        for layer in model_dict["config"]["layers"]:
+            if layer["class_name"] == "InputLayer":
+                to_removed_names.append(layer["config"]["name"])
+                to_removed.append(layer)
+
+        for layer in model_dict["config"]["layers"]:
+            for inbound in layer["inbound_nodes"]:
+                if type(inbound[0]) == str:
+                    if inbound[0] in to_removed_names:
+                        inbound[0] = "input_lambda"
+                else:
+                    for ib in inbound:
+                        if ib[0] in to_removed_names: # input
+                            ib[0] = "input_lambda"
+
+        for r in to_removed:
+            model_dict["config"]["layers"].remove(r)
+
+        model_dict["config"]["layers"] +=  temp_model_dict["config"]["layers"]
+        model_dict["config"]["input_layers"] = [[layer.name, 0, 0] for layer in inputs]
 
     model_json = json.dumps(model_dict)
     if custom_objects is None:
