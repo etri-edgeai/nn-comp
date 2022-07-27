@@ -687,6 +687,7 @@ def run():
             model = make_distiller(model, teacher, positions=positions, scale=0.1, model_builder=model_builder)
             config["mode"] = "distillation_label_free"
         else:
+            model = add_augmentation(model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
             config["mode"] = "finetune"
 
         train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir, conf=config)
