@@ -663,7 +663,7 @@ def run():
 
         model = model_path_based_load(args.dataset, args.model_path, model_handler)
 
-        if args.model_path2 is not None:
+        if args.model_path2 is not None or args.distillation:
             # position_mode must be str
             import json
             with open(args.position_mode, "r") as f: 
@@ -678,8 +678,8 @@ def run():
             mixed_precision.set_global_policy('mixed_float16')
             model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=position_set)
 
-        if args.model_path2 is not None:
-
+        if args.model_path2 is not None or args.distillation:
+            print("distillation!")
             teacher = model_path_based_load(args.dataset, args.model_path2, model_handler)
             if config["use_amp"]:
                 teacher = change_dtype(teacher, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=position_set)
