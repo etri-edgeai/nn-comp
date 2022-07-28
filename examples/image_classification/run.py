@@ -686,8 +686,9 @@ def run():
 
             from nncompress.backend.tensorflow_.transformation import unfold
             teacher = unfold(teacher)
+            teacher = add_augmentation(teacher, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
 
-            model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
+            model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
             model = make_distiller(model, teacher, positions=positions, scale=0.1, model_builder=model_builder)
             config["mode"] = "distillation_label_free"
         else:
