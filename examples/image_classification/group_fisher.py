@@ -184,7 +184,8 @@ def compute_positions(model, ordered_groups, torder, parser, position_mode, num_
 
             trank = torder[heuristic_positions[current_id]]
             is_previous = False
-            for layer in g:
+            g_flatten = flatten(g)
+            for layer in g_flatten:
                 _trank = torder[layer]
                 if _trank < trank:
                     is_previous = True
@@ -240,11 +241,17 @@ def compute_positions(model, ordered_groups, torder, parser, position_mode, num_
         positions = []
         for b in blocks:
             if b[-1][1] is None:
+                c = b[-1][0][0]
                 act = parser.get_first_activation(b[-1][0][0]) # last layer.
             else:
+                c = b[-1][1]
                 act = parser.get_first_activation(b[-1][1])
+
             if act not in positions and act is not None:
                 positions.append(act)
+            else:
+                positions.append(c)
+        print(positions)
 
     elif position_mode == 2: # random
         positions = [
