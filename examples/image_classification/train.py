@@ -124,7 +124,7 @@ def load_dataset(dataset, model_handler, sampling_ratio=1.0, training_augment=Tr
 
 
 
-def train(dataset, model, model_name, model_handler, run_eagerly=False, callbacks=None, is_training=True, augment=True, exclude_val=False, save_dir=None, n_classes=100, conf=None):
+def train(dataset, model, model_name, model_handler, run_eagerly=False, callbacks=None, is_training=True, augment=True, exclude_val=False, save_dir=None, n_classes=100, conf=None, epochs_=None):
 
     import horovod.tensorflow.keras as hvd_
 
@@ -137,10 +137,11 @@ def train(dataset, model, model_name, model_handler, run_eagerly=False, callback
     train_data_generator, valid_data_generator, test_data_generator = data_gen
     iters, iters_val = iters_info
 
-    if is_training and hasattr(model_handler, "get_train_epochs"):
-        epochs_ = model_handler.get_train_epochs()
-    else:
-        epochs_ = epochs
+    if epochs_ is None:
+        if is_training and hasattr(model_handler, "get_train_epochs"):
+            epochs_ = model_handler.get_train_epochs()
+        else:
+            epochs_ = epochs
 
     if callbacks is None:   
         callbacks = []

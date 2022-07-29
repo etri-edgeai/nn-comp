@@ -518,6 +518,7 @@ def run():
     parser.add_argument('--print_by_pruning', action='store_true')
     parser.add_argument('--eval_steps', type=int, default=-1, help='model')
     parser.add_argument('--num_blocks', type=int, default=5, help='model')
+    parser.add_argument('--epochs', type=int, default=None, help='model')
     parser.add_argument('--period', type=int, default=25, help='model')
     parser.add_argument('--min_steps', type=int, default=-1, help='model')
     parser.add_argument('--lr_mode', type=int, default=0, help='model')
@@ -695,7 +696,7 @@ def run():
             model = add_augmentation(model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
             config["mode"] = "finetune"
 
-        train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir, conf=config)
+        train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir, conf=config, epochs_=args.epochs)
     elif args.mode == "prune":
 
         iter_dir = save_dir+"/pruning_steps"
