@@ -595,10 +595,29 @@ def run():
         (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
         print(model.evaluate(test_data_gen, verbose=1)[1])
 
+    elif args.mode == "cut":
+        model = model_path_based_load(args.dataset, args.model_path, model_handler)
+        ref = model_path_based_load(args.dataset, args.model_path2, model_handler)
+        ref = add_augmentation(ref, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
+
+        gmodel, copied_model, l2g, ordered_groups, torder, parser, _ = add_gates(ref, custom_objects=model_handler.get_custom_objects())
+        #copied_model = add_augmentation(copied_model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
+        #gmodel = add_augmentation(gmodel, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
+
+        for layer in model.layers:
+            if type(layer) == SimplePruningGate:
+                print(np.sum(layer.gates))
+
+        model = parser.cut(model)
+
         from keras_flops import get_flops
         flops = get_flops(model, batch_size=1)
         print(f"FLOPS: {flops / 10 ** 9:.06} G")
         print(model.summary())
+
+        model_handler.compile(model, run_eagerly=False)
+        (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
+        print(model.evaluate(test_data_gen, verbose=1)[1])
 
     elif args.mode == "train": # train
         model = model_handler.get_model(dataset, n_classes=n_classes)
@@ -692,10 +711,12 @@ def run():
 
             model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
             model = make_distiller(model, teacher, positions=positions, scale=0.1, model_builder=model_builder)
+
             if args.with_label:
                 config["mode"] = "distillation"
             else:
                 config["mode"] = "distillation_label_free"
+
         else:
             model = add_augmentation(model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
             config["mode"] = "finetune"
