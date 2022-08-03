@@ -619,7 +619,6 @@ def run():
         (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
         print(model.evaluate(test_data_gen, verbose=1)[1])
 
-
     elif args.mode == "train": # train
         model = model_handler.get_model(dataset, n_classes=n_classes)
         if config["use_amp"]:
@@ -712,7 +711,11 @@ def run():
 
             model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
             model = make_distiller(model, teacher, positions=positions, scale=0.1, model_builder=model_builder)
-            config["mode"] = "distillation_label_free"
+
+            if args.with_label:
+                config["mode"] = "distillation"
+            else:
+                config["mode"] = "distillation_label_free"
 
         else:
             model = add_augmentation(model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
@@ -732,8 +735,8 @@ def run():
             model_path = args.model_path
 
         model = model_path_based_load(args.dataset, model_path, model_handler)
-        if method not in ["curl"]:
-            model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
+        if method not in ["curl", "hrank"]:
+            model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
 
         prune(
             dataset,
