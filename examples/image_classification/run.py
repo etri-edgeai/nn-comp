@@ -598,6 +598,7 @@ def run():
         from keras_flops import get_flops
         flops = get_flops(model, batch_size=1)
         print(f"FLOPS: {flops / 10 ** 9:.06} G")
+        print(model.summary())
 
     elif args.mode == "train": # train
         model = model_handler.get_model(dataset, n_classes=n_classes)
@@ -691,7 +692,10 @@ def run():
 
             model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
             model = make_distiller(model, teacher, positions=positions, scale=0.1, model_builder=model_builder)
-            config["mode"] = "distillation_label_free"
+            if args.with_label:
+                config["mode"] = "distillation"
+            else:
+                config["mode"] = "distillation_label_free"
         else:
             model = add_augmentation(model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
             config["mode"] = "finetune"
@@ -710,8 +714,8 @@ def run():
             model_path = args.model_path
 
         model = model_path_based_load(args.dataset, model_path, model_handler)
-        if method not in ["curl"]:
-            model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
+        if method not in ["curl", "hrank"]:
+            model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
 
         prune(
             dataset,
