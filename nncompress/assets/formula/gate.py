@@ -65,7 +65,7 @@ class SimplePruningGateFormula(Formula):
         return M.cmul(input, self.binary_selection())
 
     def binary_selection(self):
-        return self.gates # gates consists of ones or zeros.
+        return M.round(self.gates)  # gates consists of ones or zeros.
 
     def get_sparsity(self):
         selection = self.binary_selection()
