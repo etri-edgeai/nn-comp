@@ -7,6 +7,7 @@ from tqdm import tqdm
 
 from prep import add_augmentation, change_dtype
 from group_fisher import is_simple_group, flatten
+from nncompress.backend.tensorflow_.transformation.pruning_parser import has_intersection
 
 @jit
 def find_min(score, gates_info, n_channels_group, n_removed_group, ngates):
@@ -59,10 +60,12 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
             for g_ in g:
                 gate = gated_model.get_layer(l2g[g_])
                 gates_weights[l2g[g_]] = gate.gates.numpy()
+                break
         else:
             g_ = flatten(g)
             _, group_struct = parser.get_group_topology(g_)
 
+            assert len(group_struct) == 1
             items = []
             max_ = 0
             for key, val in group_struct[0].items():
@@ -136,7 +139,6 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
             for X, ty_output in zip(data, ty):
                 student_logits = gated_model(X, training=False)
                 sum_ += tf.math.reduce_mean(tf.keras.losses.kl_divergence(student_logits[0], ty_output))
-            score[local_base + lidx] = float(sum_)
 
             gate[lidx] = 1.0
             if is_simple_group(g):
@@ -169,7 +171,6 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
     ]
 
     total_ = math.ceil(n_channels * target_ratio)
-    print(total_)
     with tqdm(total=total_, ncols=80) as pbar:
         while float(n_removed) / n_channels < target_ratio:
             if save_steps != -1 and n_removed % save_steps == 0:
@@ -182,13 +183,15 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
                         g_ = flatten(g)
                         _, group_struct = parser.get_group_topology(g_)
 
+                        assert len(group_struct) == 1
                         for key_, val in group_struct[0].items():
                             if type(key_) == str:
                                 val = sorted(val, key=lambda x:x[0]) 
                                 gate_ = gated_model.get_layer(l2g[key_])
                                 gates_ = gate_.gates.numpy()
-                                for v in val:
+                                for vidx, v in enumerate(val):
                                     gates_[:] = gates_weights[key][v[0]:v[1]]
+                                    break
                                 gate_.gates.assign(gates_)
 
                 cmodel = parser.cut(gated_model)
@@ -210,18 +213,48 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
                     local_base += len_
 
             assert min_gidx != -1
-
             min_group, _ = groups[min_gidx]
+            vindices = set([min_lidx])
             if is_simple_group(min_group):
                 for min_layer in min_group:
                     gates_weights[l2g[min_layer]][min_lidx] = 0.0
             else:
-                gates_weights[min_gidx][min_lidx] = 0.0
+                g_ = flatten(min_group)
+                _, group_struct = parser.get_group_topology(g_)
 
-            score[hit_base + min_lidx] = -999.0
+                assert len(group_struct) == 1
+                relative = -1
+                last = len(vindices)
+                initial_run = True
+                visited = set()
+                while initial_run or (not last == len(vindices)):
+                    initial_run = False
+                    last = len(vindices)
 
-            n_removed += 1
-            n_removed_group[gidx] += 1
+                    for key, val in group_struct[0].items():
+                        if type(key) == str and key not in visited:
+                            val = sorted(val, key=lambda x:x[0])
+                            found = False
+
+                            for vidx in list(vindices):
+                                for v in val:
+                                    if v[0] <= vidx and vidx < v[1]:
+                                        found = True
+                                        relative = vidx - v[0]
+                                        break
+                                if found:
+                                    visited.add(key)
+                                    for v in val:
+                                        vindices.add(v[0]+relative)
+
+                for vidx in vindices:
+                    gates_weights[min_gidx][vidx] = 0.0
+
+            for vidx in vindices:
+                score[hit_base + vidx] = -999.0
+
+            n_removed += len(vindices)
+            n_removed_group[gidx] += len(vindices)
             pbar.update(1)
 
     for key in gates_weights:
@@ -240,4 +273,5 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
                     gates_ = gate_.gates.numpy()
                     for v in val:
                         gates_[:] = gates_weights[key][v[0]:v[1]]
+                        break
                     gate_.gates.assign(gates_)

@@ -595,6 +595,12 @@ def run():
         (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
         print(model.evaluate(test_data_gen, verbose=1)[1])
 
+        from keras_flops import get_flops
+        flops = get_flops(model, batch_size=1)
+        print(f"FLOPS: {flops / 10 ** 9:.06} G")
+        print(model.summary())
+ 
+
     elif args.mode == "cut":
         model = model_path_based_load(args.dataset, args.model_path, model_handler)
         ref = model_path_based_load(args.dataset, args.model_path2, model_handler)
