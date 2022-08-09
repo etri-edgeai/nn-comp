@@ -109,7 +109,7 @@ def flatten(group):
     else:
         for g in group:
             ret += flatten(g)
-    return ret
+    return list(set(ret))
 
 def extract_parents(p):
     ret = []
