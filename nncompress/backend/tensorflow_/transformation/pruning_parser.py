@@ -602,7 +602,10 @@ class PruningNNParser(NNParser):
                 if len(self._model.get_layer(g).get_weights()) == 0:
                     return self._model.get_layer(g).output.shape[-1]
                 else:
-                    return self._model.get_layer(g).get_weights()[0].shape[-1] # channels
+                    if self._model.get_layer(g).__class__.__name__ == "SeparableConv2D":
+                        return self._model.get_layer(g).get_weights()[0].shape[-2] # channels
+                    else:
+                        return self._model.get_layer(g).get_weights()[0].shape[-1] # channels
             else:
                 if type(g) == tuple:
                     backup_sum_ = sum_
