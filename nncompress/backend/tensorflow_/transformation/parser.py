@@ -668,12 +668,20 @@ class NNParser(object):
                         if type(ot) == tuple:
                             ot = ot[tidx]
                         inputs_.append(ot)
+                        if self._graph.nodes(data=True)[dst]["layer_dict"]["class_name"] == "TFOpLambda":
+                            inputs_.append(e[2]["temp"]["y"])
+
                 if len(inputs_) == 1:
                     inputs_ = inputs_[0]
 
-                out_tensors.update({
-                    (n,level):layers[n](inputs_)
-                })
+                if len(self._graph.in_edges(n)) == 1 and type(inputs_) == list:
+                    out_tensors.update({
+                        (n,level):layers[n](inputs_[0], inputs_[1])
+                    })
+                else:
+                    out_tensors.update({
+                        (n,level):layers[n](inputs_)
+                    })
 
         def stop_cond(e, is_edge):
             if not is_edge:
