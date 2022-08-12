@@ -145,9 +145,14 @@ def unfold(model, custom_objects=None):
         if layer["name"] in input_mapping:
             continue
         for inbound in layer["inbound_nodes"]:
-            for in_ in inbound:
-                if in_[0] in input_mapping:
-                    in_[0] = input_mapping[in_[0]]
+            if type(inbound[0]) == list: #
+                for in_ in inbound:
+                    if in_[0] in input_mapping:
+                        in_[0] = input_mapping[in_[0]]
+            else:
+                if inbound[0] in input_mapping:
+                    inbound[0] = input_mapping[in_[0]]
+ 
         model_dict["config"]["layers"].append(layer)
 
     # unfold activation
@@ -156,9 +161,14 @@ def unfold(model, custom_objects=None):
     for layer in model_dict["config"]["layers"]:
         layers[layer["config"]["name"]] = layer
         for inbound in layer["inbound_nodes"]:
-            for i in inbound:
-                if i[0] not in outb:
-                    outb[i[0]] = []
+            if type(inbound[0]) == list:
+                for i in inbound:
+                    if i[0] not in outb:
+                        outb[i[0]] = []
+                    outb[i[0]].append(layer["config"]["name"])
+            else:
+                if inbound[0] not in outb:
+                    outb[inbound[0]] = []
                 outb[i[0]].append(layer["config"]["name"])
 
     output_layers = set()
