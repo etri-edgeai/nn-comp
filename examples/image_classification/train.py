@@ -21,7 +21,7 @@ from prep import add_augmentation
 # constants
 epochs = 50
 
-def load_data_nvidia(dataset, model_handler, sampling_ratio=1.0, training_augment=True, batch_size=-1, n_classes=100, cutmix_alpha=1.0, mixup_alpha=0.8):
+def load_data_nvidia(dataset, model_handler, sampling_ratio=1.0, training_augment=True, batch_size=-1, n_classes=100, cutmix_alpha=0.0, mixup_alpha=0.0):
 
     dim = (model_handler.height, model_handler.width)
 

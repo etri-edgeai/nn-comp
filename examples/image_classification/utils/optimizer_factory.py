@@ -287,6 +287,18 @@ def build_optimizer(
                                      beta_1=beta_1,
                                      beta_2=beta_2,
                                      epsilon=epsilon)
+  elif optimizer_name == 'adamb':
+    epsilon = params.get('epsilon', 1e-14)
+    weight_decay = params.get('weight_decay', 0.0)
+    beta_1 = params.get('beta_1', 0.9)
+    beta_2 = params.get('beta_2', 0.999)
+    optimizer = tfa.optimizers.AdaBelief(weight_decay=weight_decay,
+                                     learning_rate=base_learning_rate,
+                                     beta_1=beta_1,
+                                     beta_2=beta_2,
+                                     epsilon=epsilon,
+                                     rectify=True)
+
   else:
     raise ValueError('Unknown optimizer %s' % optimizer_name)
 

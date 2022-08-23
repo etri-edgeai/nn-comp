@@ -122,7 +122,7 @@ def get_model(dataset, n_classes=100):
             include_top=True, weights='imagenet', input_tensor=None, input_shape=input_shape, pooling=None, classes=1000)
         return model
     else:
-        densenet = tf.keras.applications.DenseNet121(include_top=False, weights='imagenet', input_shape=input_shape, classes=n_classes)
+        densenet = tf.keras.applications.NASNetMobile(include_top=False, weights='imagenet', input_shape=input_shape, classes=n_classes)
         model = Sequential()
         model.add(densenet)
         model.add(GlobalAveragePooling2D())
