@@ -25,6 +25,10 @@ def get_model_handler(model_name):
         from models import nasnetmobile as model_handler
     elif model_name == "nasnetlarge":
         from models import nasnetlarge as model_handler
+    elif model_name == "mobilenetv3large":
+        from models import mobilenetv3large as model_handler
+    elif model_name == "mobilenetv3small":
+        from models import mobilenetv3small as model_handler
     else:
         raise NotImplementedError()
 

@@ -80,7 +80,6 @@ class PruningNNParser(NNParser):
     def parse(self):
         super(PruningNNParser, self).parse()
 
-        tf.keras.utils.plot_model(self._model, "ttt.pdf")
         def extract(i):
             if type(i) == frozenset and len(i) == 0:
                 return None

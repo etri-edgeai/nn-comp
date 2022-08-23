@@ -9,8 +9,8 @@ import cv2
 
 import efficientnet.tfkeras as efn
 
-height = 224
-width = 224
+height = 260
+width = 260
 input_shape = (height, width, 3) # network input
 batch_size = 32
 
