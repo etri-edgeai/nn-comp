@@ -77,7 +77,7 @@ def prune_filter(model, domain, mode="channel", custom_objects=None):
     from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
     domain = copy.deepcopy(domain)
     if mode == "channel": # it supports `channel_pruning` only now.
-        parser = PruningNNParser(model, custom_objects)
+        parser = PruningNNParser(model, custom_objects=custom_objects)
         parser.parse()
         avoid = parser.get_last_transformers()
         for a in avoid:
@@ -86,7 +86,7 @@ def prune_filter(model, domain, mode="channel", custom_objects=None):
 
 def get_sharing_layers(model, target, custom_objects=None):
     from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
-    parser = PruningNNParser(model, custom_objects)
+    parser = PruningNNParser(model, custom_objects=custom_objects)
     parser.parse()
 
     if type(target) == list:
@@ -102,7 +102,7 @@ def get_sharing_layers(model, target, custom_objects=None):
 
 def get_sharing_groups(model, custom_objects=None):
     from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
-    parser = PruningNNParser(model, custom_objects)
+    parser = PruningNNParser(model, custom_objects=custom_objects)
     parser.parse()
     model_ = parser.inject()
     tf.keras.utils.plot_model(model_, to_file="gmodel.png", show_shapes=True)
@@ -117,7 +117,7 @@ def get_topology(model, custom_objects=None):
 def prune(model, masking, mode="channel", custom_objects=None):
     from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
     if mode == "channel":
-        parser = PruningNNParser(model, custom_objects)
+        parser = PruningNNParser(model, custom_objects=custom_objects)
         parser.parse()
         model_ = parser.inject()
         for t, g in parser.get_t2g().items():

@@ -46,6 +46,8 @@ import model_profiler
 
 from nncompress.backend.tensorflow_ import SimplePruningGate
 from nncompress.backend.tensorflow_.transformation.pruning_parser import StopGradientLayer
+from nncompress.compression import lowrank
+from nncompress.backend.tensorflow_.transformation import unfold
 from nncompress import backend as M
 
 from curl import apply_curl
@@ -593,7 +595,7 @@ def run():
         tf.keras.utils.plot_model(model, "tested_model.pdf", expand_nested=True)
         model_handler.compile(model, run_eagerly=False)
         (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
-        print(model.evaluate(test_data_gen, verbose=1)[1])
+        acc = model.evaluate(test_data_gen, verbose=1)[1]
 
         from keras_flops import get_flops
         flops = get_flops(model, batch_size=1)
@@ -625,6 +627,27 @@ def run():
         (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
         print(model.evaluate(test_data_gen, verbose=1)[1])
 
+    elif args.mode == "decompose": # decompose
+
+        model = model_path_based_load(args.dataset, args.model_path, model_handler)
+        model = unfold(model)
+        sum_params = 0
+        cnt = 0
+        for layer in model.layers:
+            if "Conv2D" == layer.__class__.__name__:
+                sum_params += np.prod(layer.get_weights()[0].shape)
+                cnt += 1
+        avg_params = float(sum_params) / cnt
+        targets = []
+        for layer in model.layers:
+            if "Conv2D" == layer.__class__.__name__:
+                if np.prod(layer.get_weights()[0].shape) > avg_params:
+                    targets.append((layer.name, 0.25))
+
+        cmodel = lowrank.decompose(model, targets, custom_objects=custom_object_scope)[0]
+        cmodel_filename = "decomposed_" + os.path.basename(args.model_path)
+        tf.keras.models.save_model(cmodel, save_dir + "/" + cmodel_filename)
+        
     elif args.mode == "train": # train
         model = model_handler.get_model(dataset, n_classes=n_classes)
         if config["use_amp"]:
@@ -711,7 +734,6 @@ def run():
             if config["use_amp"]:
                 teacher = change_dtype(teacher, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=position_set)
 
-            from nncompress.backend.tensorflow_.transformation import unfold
             teacher = unfold(teacher)
             teacher = add_augmentation(teacher, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
 
@@ -728,6 +750,27 @@ def run():
             config["mode"] = "finetune"
 
         train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir, conf=config, epochs_=args.epochs)
+
+        if hvd.rank() == 0:
+            model_filename = "finetuned_" + os.path.basename(args.model_path)
+            tf.keras.models.save_model(model, save_dir + "/" + model_filename, include_optimizer=False)
+
+    elif args.mode == "cut": # train
+
+        model = model_path_based_load(args.dataset, args.model_path, model_handler)
+        if args.model_path2 is not None:
+            teacher = model_path_based_load(args.dataset, args.model_path2, model_handler)
+            # model must be a gated model.
+            gmodel, copied_model, l2g, ordered_groups, torder, parser, _ = add_gates(teacher, custom_objects=model_handler.get_custom_objects())
+
+        else:
+            raise ValueError("model_path2 should be defined.")
+
+        cmodel = parser.cut(model)
+        save_dir = save_dir+"/finetuned_models"
+        cmodel_filename = "cmodel_" + os.path.basename(args.model_path)
+        tf.keras.models.save_model(cmodel, save_dir + "/" + cmodel_filename)
+
     elif args.mode == "prune":
 
         iter_dir = save_dir+"/pruning_steps"

@@ -36,6 +36,7 @@ def decompose(model, targets, custom_objects=None):
     decomposed = []
     targets_ = []
     for target, ratio in targets:
+        print(target, ratio)
         weights = M.get_weights(model, target)
         rank = min(int(ratio * weights[0].shape[-1]), int(ratio * weights[0].shape[-2]))
         if rank < 3:

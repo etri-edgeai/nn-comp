@@ -304,22 +304,24 @@ class PruningNNParser(NNParser):
         act = []
         def act_mapping(n, level):
             node_data = self._graph.nodes(data=True)[n]
-            if node_data["layer_dict"]["class_name"] in ["Activation", "ReLU", "Softmax"] and len(act) == 0:
-                act.append(node_data["layer_dict"]["config"]["name"])
+            if node_data["layer_dict"]["class_name"] in ["Activation", "ReLU", "Softmax", "BatchNormalization"] and len(act) <= 1:
+            #if node_data["layer_dict"]["class_name"] in ["Activation", "ReLU", "Softmax"] and len(act) == 0:
+                if node_data["layer_dict"]["class_name"] == "BatchNormalization" or (not node_data["layer_dict"]["config"]["activation"] == "sigmoid"):
+                    act.append(node_data["layer_dict"]["config"]["name"])
         
         def stop(n, is_edge=False):
             if len(n) > 2:
                 return False
 
             n, level = n
-            if len(act) > 0:
+            if len(act) > 1:
                 return True
             else:
                 return False
 
         sources = [ (node_name, self._graph.nodes(data=True)[node_name]) ]
         self.traverse(sources=sources, node_callbacks=[act_mapping], stopping_condition=stop)
-        return act[0] if len(act) > 0 else None
+        return act if len(act) > 0 else None
 
 
     def inject(self, avoid=None, with_mapping=False, with_splits=False, allow_pruning_last=False):

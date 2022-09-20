@@ -15,7 +15,7 @@ def extract_sample_features(model, layers, handler, nsamples=3, npoints=10):
     ret = {}
     for data in sampled_data:
         X, Y = data
-        Y_ = model_.predict(X)
+        Y_ = model_.predict(X, verbose=0)
         for idx, layer in enumerate(layers):
             layer_input = Y_[2*idx]
             layer_output = Y_[2*idx+1]
