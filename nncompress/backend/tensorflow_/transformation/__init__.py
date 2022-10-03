@@ -134,12 +134,17 @@ def unfold(model, custom_objects=None):
     for layer in model_dict["config"]["layers"]:
         if layer["class_name"] != "Functional": 
             for inbound in layer["inbound_nodes"]:
-                for in_ in inbound:
-                    if in_[0] in output_mapping:
-                        layer_name = in_[0]
-                        in_[0] = output_mapping[layer_name][0][0] # layer_name
-                        in_[1] = 0 # flow
-                        in_[2] = output_mapping[layer_name][0][2] # tensor_idx
+                if layer["class_name"] == "TFOpLambda":
+                    layer_name = inbound[0]
+                    if inbound[0] in output_mapping:
+                        inbound[0] = output_mapping[layer_name][0][0]
+                else:
+                    for in_ in inbound:
+                        if in_[0] in output_mapping:
+                            layer_name = in_[0]
+                            in_[0] = output_mapping[layer_name][0][0] # layer_name
+                            in_[1] = 0 # flow
+                            in_[2] = output_mapping[layer_name][0][2] # tensor_idx
 
     for layer in layers_:
         if layer["name"] in input_mapping:
