@@ -294,10 +294,13 @@ class NNParser(object):
         # hard remedy
         for layer in model_dict["config"]["layers"]:
             for flow in layer["inbound_nodes"]:
-                for inbound in flow:
-                    if inbound[0] in map_:
-                        inbound[0] = map_[inbound[0]]
-
+                if layer["class_name"] == "TFOpLambda":
+                    if flow[0] in map_:
+                        flow[0] = map_[flow[0]]
+                else:
+                    for inbound in flow:
+                        if inbound[0] in map_:
+                            inbound[0] = map_[inbound[0]]
 
         return model_dict
 
