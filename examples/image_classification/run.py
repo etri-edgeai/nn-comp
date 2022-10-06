@@ -197,6 +197,66 @@ def prune(
         #model_handler.batch_size = backup
         apply_curl(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio, save_dir+"/pruning_steps", model_handler.get_name()+postfix, save_steps=save_steps)
 
+    elif method == "diff":
+
+        gf_model= model_path_based_load(dataset, model_path2, model_handler)
+        class SparsityCallback(tf.keras.callbacks.Callback):
+
+            def __init__(self, model):
+                self.set_model(model)
+
+            def on_epoch_end(self, epoch, logs=None):
+
+                print("\n------------------------")
+                pruning_layers = []
+                for layer in self.model.layers:
+                    if type(layer).__name__ == "DifferentiableGate":
+                        pruning_layers.append(layer)
+
+                for layer in pruning_layers:
+                    print(float(layer.get_sparsity()))
+                print("\n")
+
+        from nncompress.backend.tensorflow_ import DifferentiableGate
+        model_ = unfold(model, custom_object_scope)
+        #model_ = add_augmentation(model_, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope, update_batch_size=True)
+        parser = PruningNNParser(model_, custom_objects=custom_object_scope, gate_class=DifferentiableGate)
+        parser.parse()
+        gmodel_, gate_mapping = parser.inject(with_mapping=True)
+        dmodel = make_distiller(gmodel_, model_, [])
+
+        gmodel, copied_model, l2g_, ordered_groups, torder, parser, _ = add_gates(model, custom_objects=model_handler.get_custom_objects())
+        il2g_ = {}
+        for key, value in l2g_.items():
+            il2g_[value] = key
+
+        sparsity_cbk = SparsityCallback(dmodel)
+        l2g = {}
+        il2g = {}
+        for layer, flow in gate_mapping:
+            l2g[layer] = gate_mapping[(layer, flow)][0]["config"]["name"]
+            il2g[gate_mapping[(layer, flow)][0]["config"]["name"]] = layer
+
+        for layer in dmodel.layers:
+            if type(layer) == DifferentiableGate:
+                target = il2g[layer.name]
+                layer.sparsity = gf_model.get_layer(l2g_[target]).get_sparsity()
+                print(layer.sparsity, layer.name)
+                dmodel.add_loss(layer.get_sparsity_loss)
+
+        config["mode"] = "distillation_label_free"
+        train(dataset, dmodel, model_handler.get_name()+"_diff", model_handler, callbacks=[sparsity_cbk], run_eagerly=False, n_classes=n_classes, save_dir=save_dir, conf=config, epochs_=30)
+
+        for layer in gmodel.layers:
+            if type(layer) == SimplePruningGate:
+                target = il2g_[layer.name]
+                layer.gates.assign(dmodel.get_layer(l2g[target]).gates.numpy())
+            else:
+                layer.set_weights(dmodel.get_layer(layer.name).get_weights())
+        
+        tf.keras.models.save_model(gmodel, model_handler.get_name()+"_diff_gated.h5")
+        return None
+
     elif method == "hrank":
 
         gmodel, copied_model, l2g, ordered_groups, torder, parser, _ = add_gates(model, custom_objects=model_handler.get_custom_objects())
