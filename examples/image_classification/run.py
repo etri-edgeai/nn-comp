@@ -47,7 +47,8 @@ import model_profiler
 from nncompress.backend.tensorflow_ import SimplePruningGate
 from nncompress.backend.tensorflow_.transformation.pruning_parser import StopGradientLayer
 from nncompress.compression import lowrank
-from nncompress.backend.tensorflow_.transformation import unfold
+from nncompress.backend.tensorflow_.transformation import parse, inject, cut, unfold
+from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser, NNParser
 from nncompress import backend as M
 
 from curl import apply_curl
@@ -140,7 +141,8 @@ def prune(
     backup_args=None,
     ret_score=False,
     eval_steps=-1,
-    lr_mode=0):
+    lr_mode=0,
+    config=None):
 
     start_time = time.time()
     custom_object_scope = {
@@ -520,10 +522,16 @@ def make_distiller(model, teacher, positions, scale=0.1, model_builder=None):
         else:
             g_outputs.append(model.get_layer(p).output)
 
-    tt = tf.keras.Model(t_model.input, [t_model.output]+t_outputs)
+    if len(t_outputs) == 0:
+        tt = tf.keras.Model(t_model.input, t_model.output)
+    else:
+        tt = tf.keras.Model(t_model.input, [t_model.output]+t_outputs)
     tt.trainable = False
 
     toutputs_ = tt(model.input)
+
+    if len(t_outputs) == 0:
+        toutputs_ = [toutputs_]
 
     if model_builder is None:
         new_model = tf.keras.Model(model.input, [model.output]+toutputs_)
@@ -872,7 +880,8 @@ def run():
             model_path2=args.model_path2,
             backup_args=vars(args),
             eval_steps=args.eval_steps,
-            lr_mode=args.lr_mode)
+            lr_mode=args.lr_mode,
+            config=config)
 
     elif args.mode == "find":
 
