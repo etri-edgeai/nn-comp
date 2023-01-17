@@ -21,7 +21,7 @@ def find_min(score, gates_info, n_channels_group, n_removed_group, ngates):
             continue
 
         for lidx in range(gates_info[gidx]):
-            if score[local_base + lidx] < -100.0:
+            if score[local_base + lidx] == -999.0:
                 continue
 
             if min_score > score[local_base+lidx]:
@@ -31,33 +31,6 @@ def find_min(score, gates_info, n_channels_group, n_removed_group, ngates):
         local_base += gates_info[gidx]
 
     return idx
-
-# get inchannel dependency
-def get_vindices(lidx, group_struct):
-    vindices = set([lidx])
-    last = len(vindices)
-    initial_run = True
-    visited = set()
-    while initial_run or (not last == len(vindices)):
-        initial_run = False
-        last = len(vindices)
-
-        for key, val in group_struct[0].items():
-            if type(key) == str and key not in visited:
-                val = sorted(val, key=lambda x:x[0])
-                for vidx in list(vindices):
-                    found = False
-                    for v in val:
-                        if v[0] <= vidx and vidx < v[1]:
-                            found = True
-                            relative = vidx - v[0]
-                            break
-                    if found:
-                        visited.add(key)
-                        for v in val:
-                            vindices.add(v[0]+relative)
-    return vindices
-
 
 def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, target_ratio, save_dir, save_prefix, save_steps):
 
@@ -107,19 +80,14 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
                 gate = gated_model.get_layer(l2g[key])
                 for v in val:
                     mask[v[0]:v[1]] += gate.gates.numpy()
-            gates_ = (mask >= 0.5).astype(np.float32)
-            assert np.sum(gates_) == gates_.shape[-1]
+            gates_ = (mask >= 1.0).astype(np.float32)
             gates_weights[gidx] = gates_
 
             gates_info.append(mask.shape[0])
             n_channels_group[gidx] = gates_info[-1]
             n_channels += gates_info[-1]
-        
+            
     score = [0.0 for _ in range(n_channels)]
-
-    import json
-    with open("score_debug.json", "w") as f:
-        json.dump(score, f)
 
     local_base = 0
     for gidx, (g, _) in enumerate(tqdm(groups, ncols=80)):
@@ -144,7 +112,7 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
                 gate = gated_model.get_layer(l2g[key])
                 for v in val:
                     mask[v[0]:v[1]] += gate.gates.numpy()
-            gate = (mask >= 0.5).astype(np.float32)
+            gate = (mask >= 1.0).astype(np.float32)
 
         for lidx in range(gate.shape[0]):
 
@@ -157,24 +125,20 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
                 g_ = flatten(g)
                 _, group_struct = parser.get_group_topology(g_)
 
-                vindices = get_vindices(lidx, group_struct) # expand to inner channels depends on lidx
-                for vidx in vindices:
-                    for key, val in group_struct[0].items():
-                        if type(key) == str:
-                            val = sorted(val, key=lambda x:x[0])
-                            gate_ = gated_model.get_layer(l2g[key])
-                            for v in val:
-                                if v[0] <= vidx and vidx < v[1]:
-                                    gates_ = gate_.gates.numpy()
-                                    gates_[vidx - v[0]] = gate[vidx]
-                                    gate_.gates.assign(gates_)
-                                    break # it is okay to see once.
+                for key, val in group_struct[0].items():
+                    if type(key) == str:
+                        val = sorted(val, key=lambda x:x[0])
+                        gate_ = gated_model.get_layer(l2g[key])
+                        for v in val:
+                            if v[0] <= lidx and lidx < v[1]:
+                                gates_ = gate_.gates.numpy()
+                                gates_[lidx - v[0]] = gate[lidx]
+                                gate_.gates.assign(gates_)
 
             sum_ = 0.0
             for X, ty_output in zip(data, ty):
                 student_logits = gated_model(X, training=False)
                 sum_ += tf.math.reduce_mean(tf.keras.losses.kl_divergence(student_logits[0], ty_output))
-            score[local_base + lidx] = float(sum_)
 
             gate[lidx] = 1.0
             if is_simple_group(g):
@@ -186,18 +150,15 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
                 g_ = flatten(g)
                 _, group_struct = parser.get_group_topology(g_)
 
-                vindices = get_vindices(lidx, group_struct) # expand to inner channels depends on lidx
-                for vidx in vindices:
-                    for key, val in group_struct[0].items():
-                        if type(key) == str:
-                            val = sorted(val, key=lambda x:x[0])
-                            gate_ = gated_model.get_layer(l2g[key])
-                            for v in val:
-                                if v[0] <= vidx and vidx < v[1]:
-                                    gates_ = gate_.gates.numpy()
-                                    gates_[vidx - v[0]] = gate[vidx]
-                                    gate_.gates.assign(gates_)
-                                    break
+                for key, val in group_struct[0].items():
+                    if type(key) == str:
+                        val = sorted(val, key=lambda x:x[0])
+                        gate_ = gated_model.get_layer(l2g[key])
+                        for v in val:
+                            if v[0] <= lidx and lidx < v[1]:
+                                gates_ = gate_.gates.numpy()
+                                gates_[lidx - v[0]] = gate[lidx]
+                                gate_.gates.assign(gates_)
 
         local_base += gate.shape[0]
 
@@ -229,12 +190,10 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
                                 gates_ = gate_.gates.numpy()
                                 for vidx, v in enumerate(val):
                                     gates_[:] = gates_weights[key][v[0]:v[1]]
-                                    assert np.sum(gates_) > 0.0
                                     break
                                 gate_.gates.assign(gates_)
 
                 cmodel = parser.cut(gated_model)
-                print(cmodel.count_params())
                 tf.keras.models.save_model(cmodel, save_dir+"/"+save_prefix+"_"+str(n_removed)+".h5")
                 tf.keras.models.save_model(gated_model, save_dir+"/"+save_prefix+"_"+str(n_removed)+"_gated_model.h5")
 
@@ -252,49 +211,46 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
                 else:
                     local_base += len_
 
-            #print(min_gidx, min_lidx, val, local_base, score[val])
             assert min_gidx != -1
             min_group, _ = groups[min_gidx]
+            vindices = set([min_lidx])
             if is_simple_group(min_group):
-                vindices = set([min_lidx])
                 for min_layer in min_group:
                     gates_weights[l2g[min_layer]][min_lidx] = 0.0
             else:
                 g_ = flatten(min_group)
                 _, group_struct = parser.get_group_topology(g_)
 
-                vindices = get_vindices(min_lidx, group_struct)
+                assert len(group_struct) == 1
+                relative = -1
+                last = len(vindices)
+                initial_run = True
+                visited = set()
+                while initial_run or (not last == len(vindices)):
+                    initial_run = False
+                    last = len(vindices)
+
+                    for key, val in group_struct[0].items():
+                        if type(key) == str and key not in visited:
+                            val = sorted(val, key=lambda x:x[0])
+                            found = False
+
+                            for vidx in list(vindices):
+                                for v in val:
+                                    if v[0] <= vidx and vidx < v[1]:
+                                        found = True
+                                        relative = vidx - v[0]
+                                        break
+                                if found:
+                                    visited.add(key)
+                                    for v in val:
+                                        vindices.add(v[0]+relative)
+
                 for vidx in vindices:
                     gates_weights[min_gidx][vidx] = 0.0
 
             for vidx in vindices:
                 score[hit_base + vidx] = -999.0
-
-            # zero filter test
-            if is_simple_group(min_group):
-                if np.sum(gates_weights[l2g[min_group[0]]]) <= 5.0: # avoid zero filter case
-                    for min_layer in min_group:
-                        gates_weights[l2g[min_layer]][min_lidx] = 1.0
-                    continue
-            else:
-                g, _ = groups[min_gidx]
-                g_ = flatten(g)
-                _, group_struct = parser.get_group_topology(g_)
-
-                assert len(group_struct) == 1
-                min_filter_violation = False
-                for key_, val in group_struct[0].items():
-                    if type(key_) == str:
-                        val = sorted(val, key=lambda x:x[0]) 
-                        for vidx, v in enumerate(val):
-                            if np.sum(gates_weights[key][v[0]:v[1]]) <= 5.0:
-                                min_filter_violation = True
-                                break
-
-                if min_filter_violation: # avoid zero filter case
-                    for vidx in vindices:
-                        gates_weights[min_gidx][vidx] = 1.0
-                    continue
 
             n_removed += len(vindices)
             n_removed_group[gidx] += len(vindices)

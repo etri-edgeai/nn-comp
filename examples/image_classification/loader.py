@@ -6,7 +6,8 @@ def get_model_handler(model_name):
     elif model_name == "efnet1":
         from models import efficientnet1_keras as model_handler
     elif model_name == "efnet2":
-        from models import efficientnet2_keras as model_handler
+        from models import efficientnet2 as model_handler
+        #from models import efficientnet2_keras as model_handler
     elif model_name == "vit":
         from models import vit as model_handler
     elif model_name == "densenet":

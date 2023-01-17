@@ -153,3 +153,7 @@ def get_callbacks(nstep):
 
 def get_custom_objects():
     return None
+
+
+def get_heuristic_positions():
+    return None
