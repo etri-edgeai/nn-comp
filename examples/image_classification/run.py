@@ -54,6 +54,7 @@ from nncompress import backend as M
 from curl import apply_curl
 from hrank import apply_hrank
 from l2 import apply_l2prune
+from rewiring import apply_rewiring
 from group_fisher import make_group_fisher, add_gates, prune_step, compute_positions, flatten
 from loader import get_model_handler
 
@@ -163,6 +164,8 @@ def prune(
         postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_gf_label_only_"+str(target_ratio)+"_"+str(num_remove)
     elif method == "curl":
         postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_curl_"+str(target_ratio)
+    elif method == "rewire":
+        postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_rewire_"+str(target_ratio)
     elif method == "hrank":
         postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_hrank_"+str(target_ratio)
     elif method == "l2":
@@ -194,10 +197,20 @@ def prune(
         backup = model_handler.batch_size
         model_handler.batch_size = 256
         (train_data_generator_, _, _), (_, _) = load_dataset(dataset, model_handler, training_augment=False, n_classes=n_classes)
-        copied_model = add_augmentation(copied_model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
-        gmodel = add_augmentation(gmodel, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
+        copied_model = add_augmentation(copied_model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope, update_batch_size=True)
+        gmodel = add_augmentation(gmodel, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope, update_batch_size=True)
         #model_handler.batch_size = backup
         apply_curl(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio, save_dir+"/pruning_steps", model_handler.get_name()+postfix, save_steps=save_steps)
+
+    elif method == "rewire":
+        gmodel, copied_model, l2g, ordered_groups, torder, parser, _ = add_gates(model, custom_objects=model_handler.get_custom_objects())
+        backup = model_handler.batch_size
+        model_handler.batch_size = 16
+        (train_data_generator_, _, _), (_, _) = load_dataset(dataset, model_handler, training_augment=False, n_classes=n_classes)
+        copied_model = add_augmentation(copied_model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope, update_batch_size=True)
+        gmodel = add_augmentation(gmodel, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope, update_batch_size=True)
+        #model_handler.batch_size = backup
+        apply_rewiring(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio, save_dir+"/pruning_steps", model_handler.get_name()+postfix, save_steps=save_steps)
 
     elif method == "diff":
 
@@ -265,8 +278,8 @@ def prune(
         backup = model_handler.batch_size
         model_handler.batch_size = 256
         (train_data_generator_, _, _), (_, _)  = load_dataset(dataset, model_handler, training_augment=False, n_classes=n_classes)
-        copied_model = add_augmentation(copied_model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
-        gmodel = add_augmentation(gmodel, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
+        copied_model = add_augmentation(copied_model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope, update_batch_size=True)
+        gmodel = add_augmentation(gmodel, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope, update_batch_size=True)
         gf_model= model_path_based_load(dataset, model_path2, model_handler)
         apply_hrank(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio, gf_model)
         cmodel = parser.cut(gmodel)
@@ -502,35 +515,34 @@ def make_distiller(model, teacher, positions, scale=0.1, model_builder=None):
     with keras.utils.custom_object_scope(custom_object_scope):
         t_model = M.add_prefix(teacher, "t_", not_change_input=True)
 
-    t_outputs = []
-    for p in positions:
-        if type(p) == list:
-            sub_p = []
-            for l in p:
-                sub_p.append(t_model.get_layer("t_"+l).output)
-            t_outputs.append(sub_p)
-        else:
-            t_outputs.append(t_model.get_layer("t_"+p).output)
+    if len(positions) > 0:
+        t_outputs = []
+        for p in positions:
+            if type(p) == list:
+                sub_p = []
+                for l in p:
+                    sub_p.append(t_model.get_layer("t_"+l).output)
+                t_outputs.append(sub_p)
+            else:
+                t_outputs.append(t_model.get_layer("t_"+p).output)
 
-    g_outputs = []
-    for p in positions:
-        if type(p) == list:
-            sub_p = []
-            for l in p:
-                sub_p.append(model.get_layer(l).output)
-            g_outputs.append(sub_p)
-        else:
-            g_outputs.append(model.get_layer(p).output)
+        g_outputs = []
+        for p in positions:
+            if type(p) == list:
+                sub_p = []
+                for l in p:
+                    sub_p.append(model.get_layer(l).output)
+                g_outputs.append(sub_p)
+            else:
+                g_outputs.append(model.get_layer(p).output)
 
-    if len(t_outputs) == 0:
-        tt = tf.keras.Model(t_model.input, t_model.output)
-    else:
         tt = tf.keras.Model(t_model.input, [t_model.output]+t_outputs)
+    else:
+        tt = t_model
     tt.trainable = False
 
     toutputs_ = tt(model.input)
-
-    if len(t_outputs) == 0:
+    if type(toutputs_) != list:
         toutputs_ = [toutputs_]
 
     if model_builder is None:
@@ -538,18 +550,19 @@ def make_distiller(model, teacher, positions, scale=0.1, model_builder=None):
     else:
         new_model = model_builder(model.input, [model.output]+toutputs_)
 
-    for s, t in zip(g_outputs, toutputs_[1:]):
-        if type(s) == list:
-            temp = None
-            for s_, t_ in zip(s, t):
-                if temp is None:
-                    temp = tf.reduce_mean(tf.keras.losses.mean_squared_error(t_, s_)*scale)
-                else:
-                    temp += tf.reduce_mean(tf.keras.losses.mean_squared_error(t_, s_)*scale)
-            temp /= len(s)
-            new_model.add_loss(temp)
-        else:
-            new_model.add_loss(tf.reduce_mean(tf.keras.losses.mean_squared_error(t, s)*scale))
+    if len(positions) > 0:
+        for s, t in zip(g_outputs, toutputs_[1:]):
+            if type(s) == list:
+                temp = None
+                for s_, t_ in zip(s, t):
+                    if temp is None:
+                        temp = tf.reduce_mean(tf.keras.losses.mean_squared_error(t_, s_)*scale)
+                    else:
+                        temp += tf.reduce_mean(tf.keras.losses.mean_squared_error(t_, s_)*scale)
+                temp /= len(s)
+                new_model.add_loss(temp)
+            else:
+                new_model.add_loss(tf.reduce_mean(tf.keras.losses.mean_squared_error(t, s)*scale))
 
     new_model.add_loss(tf.reduce_mean(tf.keras.losses.kl_divergence(model.output, toutputs_[0])*scale))
 
@@ -659,7 +672,7 @@ def run():
     if args.mode == "test":
 
         model = model_path_based_load(args.dataset, args.model_path, model_handler)
-        model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
+        model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope)
         tf.keras.utils.plot_model(model, "tested_model.pdf", expand_nested=True)
         model_handler.compile(model, run_eagerly=False)
         (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
@@ -674,7 +687,7 @@ def run():
     elif args.mode == "cut":
         model = model_path_based_load(args.dataset, args.model_path, model_handler)
         ref = model_path_based_load(args.dataset, args.model_path2, model_handler)
-        ref = add_augmentation(ref, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
+        ref = add_augmentation(ref, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope, update_batch_size=True)
 
         gmodel, copied_model, l2g, ordered_groups, torder, parser, _ = add_gates(ref, custom_objects=model_handler.get_custom_objects())
         #copied_model = add_augmentation(copied_model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
@@ -723,7 +736,7 @@ def run():
             from tensorflow.keras import mixed_precision
             mixed_precision.set_global_policy('mixed_float16')
             model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=None)
-        model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
+        model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope)
         config["mode"] = "train"
         train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=False, n_classes=n_classes, save_dir=save_dir, conf=config)
 
@@ -734,7 +747,7 @@ def run():
             from tensorflow.keras import mixed_precision
             mixed_precision.set_global_policy('mixed_float16')
             model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=None)
-        model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope)
+        model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope)
 
         from ray import tune
         from ray.tune.suggest.bayesopt import BayesOptSearch
@@ -803,9 +816,9 @@ def run():
                 teacher = change_dtype(teacher, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=position_set)
 
             teacher = unfold(teacher)
-            teacher = add_augmentation(teacher, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
+            teacher = add_augmentation(teacher, model_handler.width, train_batch_size=batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope, update_batch_size=True)
 
-            model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
+            model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope, update_batch_size=True)
             model = make_distiller(model, teacher, positions=positions, scale=0.1, model_builder=model_builder)
 
             if args.with_label:
@@ -814,7 +827,7 @@ def run():
                 config["mode"] = "distillation_label_free"
 
         else:
-            model = add_augmentation(model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
+            model = add_augmentation(model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope, update_batch_size=True)
             config["mode"] = "finetune"
 
         train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir, conf=config, epochs_=args.epochs)
@@ -853,7 +866,7 @@ def run():
 
         model = model_path_based_load(args.dataset, model_path, model_handler)
         if method not in ["curl", "hrank"]:
-            model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=True, do_cutmix=True, custom_objects=custom_object_scope, update_batch_size=True)
+            model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope, update_batch_size=True)
 
         prune(
             dataset,
