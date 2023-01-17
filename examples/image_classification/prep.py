@@ -4,7 +4,6 @@ import tensorflow as tf
 from tensorflow import keras
 
 from dataloader.dataset_factory import *
-from models.custom import GAModel
 
 from nncompress.backend.tensorflow_ import SimplePruningGate
 from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser, StopGradientLayer, has_intersection
@@ -60,6 +59,55 @@ def get_custom_objects():
         "StopGradientLayer":StopGradientLayer
     }
     return custom_objects
+
+
+def remove_augmentation(model, custom_objects=None):
+    found = False
+    for l in model.layers:
+        if l.name == "mixup_weight":
+            found = True
+            break
+    if not found:
+        return model
+
+    model_dict = json.loads(model.to_json())
+
+    to_removed_names = []
+    to_removed = []
+    image_name = None
+    for layer in model_dict["config"]["layers"]:
+        if layer["class_name"] == "InputLayer" or layer["config"]["name"] == "input_lambda":
+            if "image" not in layer["config"]["name"]:
+                to_removed_names.append(layer["config"]["name"])
+                to_removed.append(layer)
+            else:
+                image_name = layer["config"]["name"]
+
+    for layer in model_dict["config"]["layers"]:
+        for inbound in layer["inbound_nodes"]:
+            if type(inbound[0]) == str:
+                if inbound[0] == "input_lambda":
+                    inbound[0] = image_name
+            else:
+                for ib in inbound:
+                    if ib[0] in to_removed_names: # input
+                        ib[0] = image_name
+
+    for r in to_removed:
+        model_dict["config"]["layers"].remove(r)
+    model_dict["config"]["input_layers"] = [[image_name, 0, 0]]
+
+    model_json = json.dumps(model_dict)
+    if custom_objects is None:
+        custom_objects = {}
+    model_ = tf.keras.models.model_from_json(model_json, custom_objects=custom_objects)
+
+    for layer in model.layers:
+        if layer.name in to_removed_names:
+            continue
+        model_.get_layer(layer.name).set_weights(layer.get_weights())
+
+    return model_
 
 
 def add_augmentation(model, image_size, train_batch_size=32, do_mixup=False, do_cutmix=False, custom_objects=None, update_batch_size=False):
