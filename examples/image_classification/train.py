@@ -335,6 +335,7 @@ def iteration_based_train(dataset, model, model_handler, max_iters, lr_mode=0, t
     first_batch = True
     with tqdm(total=max_iters // hvd.size(), ncols=120, disable=hvd.rank() != 0) as pbar:
         while global_step < max_iters // hvd.size(): 
+
             # start with new epoch.
             done = False
             idx = 0
@@ -350,6 +351,8 @@ def iteration_based_train(dataset, model, model_handler, max_iters, lr_mode=0, t
 
                 if callback_before_update is not None:
                     ret = callback_before_update(idx, global_step, X, model, teacher_logits, y, pbar)
+                else:
+                    ret = None
 
                 if with_label:
                     if with_distillation:
@@ -384,6 +387,12 @@ def iteration_based_train(dataset, model, model_handler, max_iters, lr_mode=0, t
                 if stopping_callback is not None and stopping_callback(idx, global_step):
                     done = True
                     break
+                else:
+                    if global_step >= max_iters // hvd.size():
+                        done = True
+                        break
+                    else:
+                        done = False
             if done:
                 break
             else:

@@ -30,7 +30,7 @@ def change_dtype_(model_dict, policy, distill_set=None):
         elif layer["class_name"] == "TFOpLambda" or layer["class_name"] == "AddLoss":
             continue
         else:
-            layer["config"]["dtype"] = {'class_name': 'Policy', 'config': {'name': 'mixed_float16'}}
+            layer["config"]["dtype"] = {'class_name': 'Policy', 'config': {'name': "mixed_float16"}}
 
 
 def change_dtype(model_, policy, distill_set=None, custom_objects=None):

@@ -293,11 +293,18 @@ class PruningNNParser(NNParser):
             if level != level_change[0] or tensor != tensor_:
                 continue
             for flow_idx, flow in enumerate(layers_dict[dst]["inbound_nodes"]):
-                for inbound in flow:
+                if type(flow[0]) == str:
+                    inbound = flow
                     if inbound[0] == src and level_change[0] == inbound[1] and level_change[1] == flow_idx and tensor_ == inbound[2]:
                         inbound[0] = target[0]["config"]["name"]
                         inbound[1] = target[1]
                         inbound[2] = target[2]
+                else:
+                    for inbound in flow:
+                        if inbound[0] == src and level_change[0] == inbound[1] and level_change[1] == flow_idx and tensor_ == inbound[2]:
+                            inbound[0] = target[0]["config"]["name"]
+                            inbound[1] = target[1]
+                            inbound[2] = target[2]
 
     def get_first_activation(self, node_name):
         

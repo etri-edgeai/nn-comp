@@ -141,6 +141,29 @@ class DWConv2DHandler(LayerHandler):
             ret.append(w_)
         return ret
 
+
+class MultiHeadAttentionHandler(LayerHandler):
+
+    @staticmethod
+    def is_transformer(tensor_idx):
+        return True
+
+    @staticmethod
+    def cut_weights(W, in_gate, out_gate): # self-attention
+        ret = []
+        for idx, w in enumerate(W):
+            if len(w.shape) == 3:
+                w_ = copy.deepcopy(w)
+                if idx < 3: # k,q,v
+                    w_[in_gate,:,:]
+                else: # o 
+                    w_[:,:,out_gate]
+            elif idx == len(W)-1: # last bias
+                w_ = copy.deepcopy(w)
+                w_[out_gate]
+            ret.append(w_)
+        return ret
+
 class SeparableConv2DHandler(LayerHandler):
 
     @staticmethod

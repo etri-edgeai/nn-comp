@@ -147,6 +147,8 @@ def add_gates(model, custom_objects=None, avoid=None):
 
     l2g = {}
     for layer, flow in gate_mapping:
+        if gate_mapping[(layer, flow)][0] is None:
+            continue
         l2g[layer] = gate_mapping[(layer, flow)][0]["config"]["name"]
 
     groups_ = parser.get_sharing_groups()

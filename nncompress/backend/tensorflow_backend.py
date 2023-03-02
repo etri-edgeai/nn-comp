@@ -242,11 +242,23 @@ def add_prefix(model, prefix, custom_objects=None, val_check=None, not_change_mo
         layer["name"] = prefix + layer["name"]
         if "name" in layer["config"]:
             layer["config"]["name"] = prefix + layer["config"]["name"]
+
         for flow in layer["inbound_nodes"]:
-            for inbound in flow:
+            if type(flow[0]) == str:
+                inbound = flow
                 if inbound[0] in is_input and not_change_input:
                     continue
+                if "value" in inbound[-1] and inbound[-1]["value"][0] == inbound[0]:
+                    inbound[-1]["value"][0] = prefix + inbound[0]
                 inbound[0] = prefix + inbound[0]
+            else:
+                for inbound in flow:
+                    if inbound[0] in is_input and not_change_input:
+                        continue
+                    if "value" in inbound[-1] and inbound[-1]["value"][0] == inbound[0]:
+                        inbound[-1]["value"][0] = prefix + inbound[0]
+                    inbound[0] = prefix + inbound[0]
+
     if not not_change_input:
         for input_layer in model_dict["config"]["input_layers"]:
             input_layer[0] = prefix + input_layer[0]
