@@ -10,6 +10,8 @@ def get_model_handler(model_name):
         #from models import efficientnet2_keras as model_handler
     elif model_name == "vit":
         from models import vit as model_handler
+    elif model_name == "vitlarge":
+        from models import vit_large as model_handler
     elif model_name == "densenet":
         from models import densenet as model_handler
     elif model_name == "densenet121":

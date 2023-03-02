@@ -54,7 +54,8 @@ from nncompress import backend as M
 from curl import apply_curl
 from hrank import apply_hrank
 from l2 import apply_l2prune
-from rewiring import apply_rewiring
+from rewiring_v2 import apply_rewiring
+from quant import apply_quantize
 from group_fisher import make_group_fisher, add_gates, prune_step, compute_positions, flatten
 from loader import get_model_handler
 
@@ -166,6 +167,8 @@ def prune(
         postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_curl_"+str(target_ratio)
     elif method == "rewire":
         postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_rewire_"+str(target_ratio)
+    elif method == "quantize":
+        postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_quant_"+str(target_ratio)
     elif method == "hrank":
         postfix = "_"+pos_str+"_"+dataset+"_"+str(with_label)+"_hrank_"+str(target_ratio)
     elif method == "l2":
@@ -205,12 +208,26 @@ def prune(
     elif method == "rewire":
         gmodel, copied_model, l2g, ordered_groups, torder, parser, _ = add_gates(model, custom_objects=model_handler.get_custom_objects())
         backup = model_handler.batch_size
+        (train_data_generator_, _, _), (_, _) = load_dataset(dataset, model_handler, training_augment=False, n_classes=n_classes)
+        copied_model = add_augmentation(copied_model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope, update_batch_size=True)
+        gmodel = add_augmentation(gmodel, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope, update_batch_size=True)
+        #model_handler.batch_size = backup
+
+        config["mode"] = "distillation_label_free"
+        train_func = lambda house: train(dataset, house, model_handler.get_name()+"_rewire", model_handler, run_eagerly=False, n_classes=n_classes, save_dir=save_dir, conf=config, epochs_=1)
+
+        apply_rewiring(train_data_generator_, copied_model, model_handler, gmodel, ordered_groups, l2g, parser, target_ratio, save_dir+"/rewiring", model_handler.get_name()+postfix, save_steps=save_steps, train_func=train_func, model_type=model_handler.get_name(), dataset=dataset)
+
+
+    elif method == "quantize":
+        gmodel, copied_model, l2g, ordered_groups, torder, parser, _ = add_gates(model, custom_objects=model_handler.get_custom_objects())
+        backup = model_handler.batch_size
         model_handler.batch_size = 16
         (train_data_generator_, _, _), (_, _) = load_dataset(dataset, model_handler, training_augment=False, n_classes=n_classes)
         copied_model = add_augmentation(copied_model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope, update_batch_size=True)
         gmodel = add_augmentation(gmodel, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope, update_batch_size=True)
         #model_handler.batch_size = backup
-        apply_rewiring(train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio, save_dir+"/pruning_steps", model_handler.get_name()+postfix, save_steps=save_steps)
+        apply_quantize(validate, train_data_generator_, copied_model, gmodel, ordered_groups, l2g, parser, target_ratio, save_dir+"/pruning_steps", model_handler.get_name()+postfix, save_steps=save_steps)
 
     elif method == "diff":
 
@@ -682,6 +699,13 @@ def run():
         flops = get_flops(model, batch_size=1)
         print(f"FLOPS: {flops / 10 ** 9:.06} G")
         print(model.summary())
+
+        from profile import measure
+
+        x = measure(model, "onnx_gpu")
+        print(x)
+
+        tf.keras.utils.plot_model(model, "test.pdf", show_shapes=True)
  
 
     elif args.mode == "cut":
@@ -807,6 +831,7 @@ def run():
             tf.keras.backend.set_floatx("float16")
             from tensorflow.keras import mixed_precision
             mixed_precision.set_global_policy('mixed_float16')
+            print(model)
             model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=position_set)
 
         if args.model_path2 is not None or args.distillation:
@@ -829,6 +854,9 @@ def run():
         else:
             model = add_augmentation(model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope, update_batch_size=True)
             config["mode"] = "finetune"
+
+        tf.keras.backend.set_floatx("float64")
+        model = change_dtype(model, "float64", custom_objects=custom_object_scope, distill_set=position_set)
 
         train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir, conf=config, epochs_=args.epochs)
 

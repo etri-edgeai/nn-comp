@@ -672,7 +672,18 @@ class NNParser(object):
                             ot = ot[tidx]
                         inputs_.append(ot)
                         if self._graph.nodes(data=True)[dst]["layer_dict"]["class_name"] == "TFOpLambda":
-                            inputs_.append(e[2]["temp"]["y"])
+                            if "y" in e[2]["temp"]:
+                                inputs_.append(e[2]["temp"]["y"])
+
+                # handling multi-head att.
+                if len(self._graph.nodes(data=True)[n]["layer_dict"]["inbound_nodes"]) > 0 and\
+                    type(self._graph.nodes(data=True)[n]["layer_dict"]["inbound_nodes"][0][0][-1]) == dict and\
+                    "value" in self._graph.nodes(data=True)[n]["layer_dict"]["inbound_nodes"][0][0][-1] and\
+                        self._graph.nodes(data=True)[n]["layer_dict"]["inbound_nodes"][0][0][-1]["value"][0] ==\
+                        self._graph.nodes(data=True)[n]["layer_dict"]["inbound_nodes"][0][0][0]:
+                    multi_head = True
+                else:
+                    multi_head = False
 
                 if len(inputs_) == 1:
                     inputs_ = inputs_[0]
@@ -682,9 +693,14 @@ class NNParser(object):
                         (n,level):layers[n](inputs_[0], inputs_[1])
                     })
                 else:
-                    out_tensors.update({
-                        (n,level):layers[n](inputs_)
-                    })
+                    if multi_head:
+                        out_tensors.update({
+                            (n,level):layers[n](inputs_, inputs_)
+                        })
+                    else:
+                        out_tensors.update({
+                            (n,level):layers[n](inputs_)
+                        })
 
         def stop_cond(e, is_edge):
             if not is_edge:
