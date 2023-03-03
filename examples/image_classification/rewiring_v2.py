@@ -129,7 +129,7 @@ def prune(dataset, model, model_handler, target_ratio=0.5, continue_info=None, g
     augment = False
     period = 25
     num_remove = 500
-    alpha = 1.0
+    alpha = 5.0
 
     if continue_info is None:
 
@@ -160,7 +160,6 @@ def prune(dataset, model, model_handler, target_ratio=0.5, continue_info=None, g
                     gmodel.get_layer(pc.l2g[copied_layer]).gates.assign(gates_info[layer])
                 gmodel.get_layer(pc.l2g[layer]).gates.assign(gates_info[layer])
 
-            """
             iteration_based_train(
                 dataset,
                 gmodel,
@@ -174,7 +173,6 @@ def prune(dataset, model, model_handler, target_ratio=0.5, continue_info=None, g
                 stopping_callback=None,
                 augment=augment,
                 n_classes=n_classes)
-            """
 
         continue_info = (gmodel, pc.l2g, pc.inv_groups, ordered_groups, parser, pc)
     else:
@@ -303,7 +301,7 @@ def get_conn_to(name, parser):
         ret.append(n[1])
     return ret
 
-def remove_skip_edge(model, parser, groups, remove_masks):
+def remove_skip_edge(model, parser, groups, remove_masks, weight_copy=False):
 
     model_dict = json.loads(model.to_json())
     layer_dict = {}
@@ -416,14 +414,15 @@ def remove_skip_edge(model, parser, groups, remove_masks):
     model_json = json.dumps(model_dict)
     cmodel = tf.keras.models.model_from_json(model_json, custom_objects=parser.custom_objects)
 
-    for layer in cmodel.layers:
-        try:
-            if "copied_" in layer.name:
-                layer.set_weights(model.get_layer(layer.name[7:]).get_weights())
-            else:
-                layer.set_weights(model.get_layer(layer.name).get_weights())
-        except Exception as e:
-            pass # ignore
+    if weight_copy:
+        for layer in cmodel.layers:
+            try:
+                if "copied_" in layer.name:
+                    layer.set_weights(model.get_layer(layer.name[7:]).get_weights())
+                else:
+                    layer.set_weights(model.get_layer(layer.name).get_weights())
+            except Exception as e:
+                pass # ignore
     return cmodel, _removed_layers
 
 def name2gidx(name, l2g, inv_groups):
@@ -652,7 +651,15 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
         print(masks, flag)
         # rewire
         if flag:
+            model_ = model
             model, _removed_layers = remove_skip_edge(model_backup, parser, groups, masks)
+            for layer in model.layers:
+                if len(layer.get_weights()) > 0:
+                    if "copied" in layer.name:
+                        layer.set_weights(model_.get_layer(layer.name[7:]).get_weights())
+                    else:
+                        layer.set_weights(model_.get_layer(layer.name).get_weights())
+
             continue_info = None
             tf.keras.utils.plot_model(model, "temp.pdf", show_shapes=True)
             removed_layers = removed_layers.union(set(_removed_layers))
