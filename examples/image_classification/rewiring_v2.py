@@ -45,7 +45,7 @@ def prune_step(X, model, teacher_logits, y, num_iter, groups, l2g, norm, inv_gro
 
             sum_ = None
             for grad in model.get_layer(gate).grad_holder:
-                grad = grad = pow(grad, 2)
+                grad = pow(grad, 2)
                 grad = tf.reduce_sum(grad, axis=0)
                 if sum_ is None:
                     sum_ = grad
@@ -60,6 +60,7 @@ def prune_step(X, model, teacher_logits, y, num_iter, groups, l2g, norm, inv_gro
         for gidx, group in enumerate(groups):
 
             if type(group) == dict:
+                xxx
                 for l in group:
                     if type(l) == str:
                         num_batches = len(model.get_layer(l2g[l]).grad_holder)
@@ -129,7 +130,7 @@ def prune(dataset, model, model_handler, target_ratio=0.5, continue_info=None, g
     augment = False
     period = 25
     num_remove = 500
-    alpha = 1.0
+    alpha = 100.0
 
     if continue_info is None:
 
@@ -153,6 +154,7 @@ def prune(dataset, model, model_handler, target_ratio=0.5, continue_info=None, g
                 layer.collecting = False
 
         if gates_info is not None and len(gates_info) > 0:
+
             for layer in gates_info:
                 print(layer, np.sum(gates_info[layer]))
                 copied_layer = "copied_" + layer
@@ -160,7 +162,6 @@ def prune(dataset, model, model_handler, target_ratio=0.5, continue_info=None, g
                     gmodel.get_layer(pc.l2g[copied_layer]).gates.assign(gates_info[layer])
                 gmodel.get_layer(pc.l2g[layer]).gates.assign(gates_info[layer])
 
-            """
             iteration_based_train(
                 dataset,
                 gmodel,
@@ -174,7 +175,6 @@ def prune(dataset, model, model_handler, target_ratio=0.5, continue_info=None, g
                 stopping_callback=None,
                 augment=augment,
                 n_classes=n_classes)
-            """
 
         continue_info = (gmodel, pc.l2g, pc.inv_groups, ordered_groups, parser, pc)
     else:
@@ -183,6 +183,7 @@ def prune(dataset, model, model_handler, target_ratio=0.5, continue_info=None, g
     if dump:
         tf.keras.utils.plot_model(gmodel, "gmodel.pdf", show_shapes=True)
         cmodel = parser.cut(gmodel)
+
     else:
         cmodel = None
 
@@ -464,8 +465,8 @@ def find_residual_group(sharing_group, layer_name, parser_, groups, model):
         for ridx, g in enumerate(groups):
             for _lidx, item in enumerate(g):
                 if item[0] == nearest: # hit
-                    if _lidx == len(g)-1: # avoid last.
-                        break
+                    #if _lidx == len(g)-1: # avoid last.
+                    #    break
                     rindex = (ridx, _lidx)
                     break
         return rindex
@@ -476,6 +477,7 @@ def find_residual_group(sharing_group, layer_name, parser_, groups, model):
 def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func, gmode=False, dataset="imagenet2012", custom_objects=None):
 
     window_size = 500
+    min_num_channels = 3
 
     parsers = [
         PruningNNParser(subnet, custom_objects=custom_objects) for subnet in subnets
@@ -577,10 +579,8 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
                                 score = grads[layer.name].numpy()
                                 if masks[rindex[0]][rindex[1]] != 0:
 
-                                    if satisfy_max_depth(masks, rindex, max_depth=-1):
+                                    if satisfy_max_depth(masks, rindex, max_depth=2):
                                         residual_removal[layer.name] = rindex
-                                    else:
-                                        score = cscore[gidx_]
                                     #if "copied_" + layer.name in exists: # candidate to remove
                                     #    score += grads["copied_"+layer.name].numpy()
                                     #    score /= 2.0
@@ -600,7 +600,7 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
                     if layer.name not in gates_info: # copied + sharing case
                         gates_info[layer.name] = gmodel.get_layer(l2g_[layer.name]).gates.numpy()
                     gates = gates_info[layer.name]
-                    if np.sum(gates) < 3.0:
+                    if np.sum(gates) < min_num_channels:
                         continue
                     min_val_, min_idx_ = find_min(
                         score,
