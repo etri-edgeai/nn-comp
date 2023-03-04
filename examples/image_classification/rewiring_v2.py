@@ -129,7 +129,7 @@ def prune(dataset, model, model_handler, target_ratio=0.5, continue_info=None, g
     augment = False
     period = 25
     num_remove = 500
-    alpha = 5.0
+    alpha = 1.0
 
     if continue_info is None:
 
@@ -160,6 +160,7 @@ def prune(dataset, model, model_handler, target_ratio=0.5, continue_info=None, g
                     gmodel.get_layer(pc.l2g[copied_layer]).gates.assign(gates_info[layer])
                 gmodel.get_layer(pc.l2g[layer]).gates.assign(gates_info[layer])
 
+            """
             iteration_based_train(
                 dataset,
                 gmodel,
@@ -173,6 +174,7 @@ def prune(dataset, model, model_handler, target_ratio=0.5, continue_info=None, g
                 stopping_callback=None,
                 augment=augment,
                 n_classes=n_classes)
+            """
 
         continue_info = (gmodel, pc.l2g, pc.inv_groups, ordered_groups, parser, pc)
     else:
@@ -463,8 +465,8 @@ def find_residual_group(sharing_group, layer_name, parser_, groups, model):
         for ridx, g in enumerate(groups):
             for _lidx, item in enumerate(g):
                 if item[0] == nearest: # hit
-                    if _lidx == len(g)-1: # avoid last.
-                        break
+                    #if _lidx == len(g)-1: # avoid last.
+                    #    break
                     rindex = (ridx, _lidx)
                     break
         return rindex
@@ -505,6 +507,7 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
     sharing_groups = None
     l2g = None
     inv_groups = None
+    recon_mode = True
     for it in range(100):
 
         # conduct pruning
@@ -551,6 +554,10 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
             remaining += np.sum(gates)
         print(remaining / total_)
 
+        if remaining / total_ < 0.5:
+            recon_mode = False
+        print("RECON MODE: ", recon_mode)
+
         removing_idx = []
         count = {}
         residual_removal = {}
@@ -576,7 +583,7 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
                                 score = grads[layer.name].numpy()
                                 if masks[rindex[0]][rindex[1]] != 0:
 
-                                    if satisfy_max_depth(masks, rindex, max_depth=-1):
+                                    if satisfy_max_depth(masks, rindex, max_depth=-1) and recon_mode:
                                         residual_removal[layer.name] = rindex
                                     else:
                                         score = cscore[gidx_]
