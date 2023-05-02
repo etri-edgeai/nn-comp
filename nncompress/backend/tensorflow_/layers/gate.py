@@ -63,8 +63,14 @@ class SimplePruningGate(layers.Layer, SimplePruningGateFormula):
         def grad_tracker(x):
             def custom_grad(dy, variables):
                 if self.collecting:
-                    self.grad_holder.append(\
-                        tf.reduce_sum(dy * x, axis=[1, 2]))
+                    if len(x.shape) == 4:
+                        self.grad_holder.append(\
+                            tf.reduce_sum(dy * x, axis=[1, 2]))
+                    elif len(x.shape) == 3:
+                        self.grad_holder.append(\
+                            tf.reduce_sum(dy * x, axis=[1]))
+                    else:
+                        raise NotImplementedError()
                 return self.compute(dy), [ tf.zeros(self.ngates,) ]
             return self.compute(x), custom_grad
         self.grad_tracker = grad_tracker

@@ -23,6 +23,6 @@ setup(
         "tensorly",
         "networkx",
         "numpy",
-        "sklearn"
+        "scikit-learn"
     ]
 )

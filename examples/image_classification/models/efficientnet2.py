@@ -13,15 +13,15 @@ from .loss import BespokeTaskLoss, accuracy
 
 USE_EFNET = True
 if USE_EFNET:
-    from efficientnet.tfkeras import EfficientNetB0
+    from efficientnet.tfkeras import EfficientNetB2
     from efficientnet.tfkeras import preprocess_input
 else:
-    from tensorflow.keras.applications.efficientnet import EfficientNetB0, preprocess_input
+    from tensorflow.keras.applications.efficientnet import EfficientNetB2, preprocess_input
 
 height = 260
 width = 260
 input_shape = (height, width, 3) # network input
-batch_size = 8
+batch_size = 64
 
 def center_crop_and_resize(image, image_size, crop_padding=32, interpolation='bicubic'):
     shape = tf.shape(image)

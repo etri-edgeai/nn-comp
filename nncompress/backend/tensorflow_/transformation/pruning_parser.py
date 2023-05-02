@@ -122,7 +122,8 @@ class PruningNNParser(NNParser):
                 for i in group:
                     g = extract(i)
                     if g is not None and len(g) > 0:
-                        group_.append(g)
+                        if g not in group_:
+                            group_.append(g)
 
             candidates = []
             for target in self._sharing_groups:
@@ -166,7 +167,8 @@ class PruningNNParser(NNParser):
             if (get_handler(src["layer_dict"]["class_name"]).is_transformer(e[2]["tensor"]) or
                 src["layer_dict"]["config"]["name"] in augmented_transformers) and\
                 not get_handler(dst["layer_dict"]["class_name"]).is_concat():
-                affecting_layers[(e[1], level_change[1])].append((e[0], level_change[0], e[2]["tensor"]))
+                if (e[0], level_change[0], e[2]["tensor"]) not in affecting_layers[(e[1], level_change[1])]:
+                    affecting_layers[(e[1], level_change[1])].append((e[0], level_change[0], e[2]["tensor"]))
 
             elif get_handler(dst["layer_dict"]["class_name"]).is_concat():
  
@@ -192,11 +194,14 @@ class PruningNNParser(NNParser):
                 affecting_layers[(e[1], level_change[1])] = temp
 
             elif get_handler(src["layer_dict"]["class_name"]).is_concat():
-                affecting_layers[(e[1], level_change[1])].append(tuple(affecting_layers[(e[0], level_change[0])]))
+                if tuple(affecting_layers[(e[0], level_change[0])]) not in affecting_layers[(e[1], level_change[1])]:
+                    affecting_layers[(e[1], level_change[1])].append(tuple(affecting_layers[(e[0], level_change[0])]))
 
             else:
                 if (e[0], level_change[0]) in affecting_layers: # To handle leaves
-                    affecting_layers[(e[1], level_change[1])].extend(affecting_layers[(e[0], level_change[0])])
+                    for x in affecting_layers[(e[0], level_change[0])]:
+                        if x not in affecting_layers[(e[1], level_change[1])]:
+                            affecting_layers[(e[1], level_change[1])].append(x)
 
         self.traverse(neighbor_callbacks=[pass_])
         return affecting_layers
@@ -481,7 +486,7 @@ class PruningNNParser(NNParser):
         model_dict["name"] = self.get_id("gmodel")
         model_dict["config"]["name"] = self.get_id("gmodel")
 
-        model_json = json.dumps(model_dict)
+        model_json = json.dumps(model_dict, indent=2)
         ret = tf.keras.models.model_from_json(model_json, custom_objects=self._custom_objects)
         for layer in self._model.layers:
             ret.get_layer(layer.name).set_weights(layer.get_weights())

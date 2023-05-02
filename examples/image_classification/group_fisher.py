@@ -89,6 +89,9 @@ def compute_act(layer, batch_size, pruning_input_gate=False, out_gate=None):
         elif layer.__class__.__name__ == "Dense":
             w = layer.get_weights()[0].shape
             return batch_size * w[1]
+        elif layer.__class__.__name__ == "MultiHeadAttention":
+            w = layer.get_weights()[0].shape
+            return batch_size * w[0] * 3
         else:
             return 0.0
     else: 
@@ -406,7 +409,6 @@ def compute_positions(model, ordered_groups, torder, parser, position_mode, num_
 
 
 def compute_norm(parser, gate_mapping, gmodel, batch_size, targets, groups, inv_groups, l2g):
-
     norm = {
         t.name: 0.0
         for t in targets
@@ -417,12 +419,12 @@ def compute_norm(parser, gate_mapping, gmodel, batch_size, targets, groups, inv_
     contributors = {}
 
     for l in l2g:
-        if gmodel.get_layer(l).__class__.__name__ in ["Conv2D", "Dense"]:
+        if gmodel.get_layer(l).__class__.__name__ in ["Conv2D", "Dense", "MultiHeadAttention", "PatchingAndEmbedding"]:
             g2l[l2g[l]] = l
 
     affecting = parser.get_affecting_layers()
     for child, parents_ in affecting.items():
-        if gmodel.get_layer(child[0]).__class__.__name__ not in ["Conv2D", "Dense"]:
+        if gmodel.get_layer(child[0]).__class__.__name__ not in ["Conv2D", "Dense", "MultiHeadAttention", "PacthingAndEmbedding"]:
             continue
         if child[0] not in l2g: # the last layer
             continue
@@ -433,19 +435,23 @@ def compute_norm(parser, gate_mapping, gmodel, batch_size, targets, groups, inv_
         for p in parents_:
             if type(p[0]) == frozenset:
                 for pname in extract_parents(p):
-                    if gmodel.get_layer(pname).__class__.__name__ not in ["Conv2D", "Dense"]:
+                    if gmodel.get_layer(pname).__class__.__name__ not in ["Conv2D", "Dense", "MultiHeadAttention", "PatchingAndEmbedding"]:
                         continue
                     parent_gate = l2g[pname]
                     parents[child_gate].append(parent_gate)
             else:
                 pname = p[0]
-                if gmodel.get_layer(pname).__class__.__name__ not in ["Conv2D", "Dense"]:
+                if gmodel.get_layer(pname).__class__.__name__ not in ["Conv2D", "Dense", "MultiHeadAttention", "PatchingAndEmbedding"]:
                     continue
                 parent_gate = l2g[pname]
                 parents[child_gate].append(parent_gate)
 
     for key in norm:
         norm[key] = compute_act(gmodel.get_layer(g2l[key]), batch_size)
+
+        if key not in inv_groups:
+            continue
+
         if inv_groups[key] not in contributors:
             contributors[inv_groups[key]] = set()
         contributors[inv_groups[key]].add(g2l[key])
@@ -979,6 +985,8 @@ def make_group_fisher(model,
 
     gmodel, model, l2g, ordered_groups, torder, parser, gate_mapping = add_gates(model, custom_objects, avoid)
     targets = find_all(gmodel, SimplePruningGate)
+
+    tf.keras.utils.plot_model(gmodel, "gmodel.pdf", show_shapes=True)
 
     groups = []
     for g, _ in ordered_groups:

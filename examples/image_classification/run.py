@@ -54,7 +54,7 @@ from nncompress import backend as M
 from curl import apply_curl
 from hrank import apply_hrank
 from l2 import apply_l2prune
-from rewiring_v2 import apply_rewiring
+from rewiring_v3 import apply_rewiring
 from quant import apply_quantize
 from group_fisher import make_group_fisher, add_gates, prune_step, compute_positions, flatten
 from loader import get_model_handler
@@ -63,7 +63,7 @@ from train import load_dataset, train, iteration_based_train
 from prep import add_augmentation, change_dtype
 from utils import optimizer_factory
 
-from ray.tune.integration.horovod import DistributedTrainableCreator
+#from ray.tune.integration.horovod import DistributedTrainableCreator
 
 custom_object_scope = {
     "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer, "HvdMovingAverage":optimizer_factory.HvdMovingAverage
@@ -693,7 +693,7 @@ def run():
         tf.keras.utils.plot_model(model, "tested_model.pdf", expand_nested=True)
         model_handler.compile(model, run_eagerly=False)
         (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
-        acc = model.evaluate(test_data_gen, verbose=1)[1]
+        #acc = model.evaluate(test_data_gen, verbose=1)[1]
 
         from keras_flops import get_flops
         flops = get_flops(model, batch_size=1)
@@ -702,7 +702,7 @@ def run():
 
         from profile import measure
 
-        x = measure(model, "onnx_gpu")
+        x = measure(model, "onnx_cpu")
         print(x)
 
         tf.keras.utils.plot_model(model, "test.pdf", show_shapes=True)
@@ -817,6 +817,8 @@ def run():
             model_builder = None
 
         model = model_path_based_load(args.dataset, args.model_path, model_handler)
+
+        tf.keras.utils.plot_model(model, "ftarget.pdf", show_shapes=True)
 
         if args.model_path2 is not None or args.distillation:
             # position_mode must be str

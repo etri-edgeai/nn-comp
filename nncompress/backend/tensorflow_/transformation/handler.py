@@ -78,6 +78,20 @@ class Conv2DHandler(LayerHandler):
         layer_dict["config"]["filters"] = new_weights[0].shape[-1]
         return
 
+class PatchingAndEmbeddingHandler(LayerHandler):
+
+    @staticmethod
+    def is_transformer(tensor_idx):
+        return True
+
+    @staticmethod
+    def cut_weights(W, in_gate, out_gate):
+        ret = []
+        for w in W:
+            w_ = cut(copy.deepcopy(w), in_gate, out_gate)
+            ret.append(w_)
+        return ret
+
 class WeightedSumHandler(LayerHandler):
 
     @staticmethod
@@ -250,5 +264,7 @@ LAYER_HANDLERS = {
     "Reshape": ReshapeHandler,
     "SeparableConv2D": SeparableConv2DHandler,
     "WeightedSum":WeightedSumHandler,
-    "InputLayer":InputLayerHandler
+    "InputLayer":InputLayerHandler,
+    "MultiHeadAttention":MultiHeadAttentionHandler,
+    "keras_cv>PatchingAndEmbedding":PatchingAndEmbeddingHandler
 }
