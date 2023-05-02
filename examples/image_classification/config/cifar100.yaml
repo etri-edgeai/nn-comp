@@ -1,7 +1,7 @@
 dataset: "cifar100"
 num_classes: 100
 
-use_amp: true
+use_amp: false
 lr_name: "exponential"
 initial_lr: 0.002
 t_mul: 2.0
@@ -15,13 +15,13 @@ decay: 0.9
 epsilon: 1.0e-6
 lookahead: 0
 momentum: 0.9
-moving_average_decay: 0.999
+moving_average_decay: 0.9999
 weight_decay: 0.001
 nesterov: false
 beta_1: 0.9 
 beta_2: 0.999
 grad_clip_norm: 0
 grad_accum_steps: 1
-hvd_fp16_compression: true
+hvd_fp16_compression: false
 intratrain_eval_using_ema: true
 label_smoothing: 0.1 
