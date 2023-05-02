@@ -27,13 +27,11 @@ with_distillation = False
 augment = False
 period = 25
 num_remove = 500
-num_steps = 1
-alpha = 1.0
-num_picks = 2
+num_masks = 1
+pick_ratio = 0.5
 window_size = 500
-split_th = 10
-jsim_th = 0.4
-save_path = "saved_grad_%.2f_%.2f_%d" % (split_th, jsim_th, window_size)
+min_channels = 2 # min channels + 1
+save_path = "saved_grad_%d" % (window_size)
 #save_path = "save_base3"
 print(save_path)
 
@@ -45,7 +43,7 @@ def find_min(cscore, gates, min_val, min_idx, lidx, ncol):
             min_idx = (lidx, i)
     return min_val, min_idx
 
-def prune_step(X, model, teacher_logits, y, num_iter, groups, l2g, norm, inv_groups, period, score_info, pbar=None):
+def prune_step(X, model, teacher_logits, y, num_iter, groups, l2g, norm, inv_groups, period, score_info, g2l, pbar=None):
 
     for layer in model.layers:
         if layer.__class__ == SimplePruningGate:
@@ -112,7 +110,13 @@ def prune_step(X, model, teacher_logits, y, num_iter, groups, l2g, norm, inv_gro
                 for bidx in range(num_batches):
                     grad = 0
                     for lidx, layer in enumerate(group):
-                        grad += layer.grad_holder[bidx]
+                        flag = False # copyflag
+                        for l in g2l[layer.name]:
+                            if "_copied_" in l:
+                                flag = True
+                                break
+                        if not flag:
+                            grad += layer.grad_holder[bidx]
 
                     grad = pow(grad, 2)
                     sum_ += tf.reduce_sum(grad, axis=0)
@@ -178,23 +182,6 @@ def prune(dataset, model, model_handler, target_ratio=0.5, continue_info=None, g
             
         gmodel, parser, ordered_groups, pc = get_gmodel(dataset, model, model_handler, gates_info=gates_info)
 
-        """
-        if gates_info is not None:
-            iteration_based_train(
-                dataset,
-                gmodel,
-                model_handler,
-                max_iters=period*alpha,
-                lr_mode=lr_mode,
-                teacher=None,
-                with_label=with_label,
-                with_distillation=with_distillation,
-                callback_before_update=None,
-                stopping_callback=None,
-                augment=augment,
-                n_classes=n_classes)
-        """
-
         continue_info = (gmodel, pc.l2g, pc.inv_groups, ordered_groups, parser, pc)
     else:
         gmodel, l2g, inv_groups, ordered_groups, parser, pc = continue_info
@@ -212,9 +199,15 @@ def prune(dataset, model, model_handler, target_ratio=0.5, continue_info=None, g
     inv_groups = pc.inv_groups
     score_info = {}
 
+    g2l = {}
+    for key, value in l2g.items():
+        if value not in g2l:
+            g2l[value] = []
+        g2l[value].append(key)
+
     def callback_before_update(idx, global_step, X, model_, teacher_logits, y, pbar):
         teacher_logits = None
-        return prune_step(X, model_, teacher_logits, y, global_step, groups, l2g, norm, inv_groups, period, score_info, pbar)
+        return prune_step(X, model_, teacher_logits, y, global_step, groups, l2g, norm, inv_groups, period, score_info, g2l, pbar)
 
     def stopping_callback(idx, global_step):
         if global_step >= period: # one time pruning
@@ -362,6 +355,13 @@ def select_submodel(
     mask = remove_masks[gidx]
     submask = remove_masks[gidx][idx]
     ret = []
+    max_picks = 0
+    for iidx in range(len(mask)+1):
+        if iidx <= idx:
+            continue
+        max_picks += 1
+    num_picks = max(int(max_picks * pick_ratio), 1)
+    assert num_picks >= 1
     for pick in range(num_picks):
 
         min_val = None
@@ -377,13 +377,13 @@ def select_submodel(
             model_ = remove_skip_edge(basemodel, curr_model, parser, groups, remove_masks)
             submask[iidx] = 0
 
-            tf.keras.utils.plot_model(model_, "temp_%d_%d.pdf" % (idx, iidx), show_shapes=True)
+            #tf.keras.utils.plot_model(model_, "temp_%d_%d.pdf" % (idx, iidx), show_shapes=True)
 
             for layer in model_.layers:
                 if len(layer.get_weights()) > 0:
                     if "copied" in layer.name:
                         w = curr_model.get_layer(cname2name(layer.name)).get_weights()
-                        w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
+                        #w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
                         layer.set_weights(w)
                     else:
                         layer.set_weights(curr_model.get_layer(layer.name).get_weights())
@@ -603,7 +603,7 @@ def remove_skip_edge(basemodel, curr_model, parser, groups, remove_masks, weight
             try:
                 if "copied_" in layer.name:
                     w = curr_model.get_layer(cname2name(layer.name)).get_weights()
-                    w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
+                    #w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
                     layer.set_weights(w)
                 else:
                     layer.set_weights(curr_model.get_layer(layer.name).get_weights())
@@ -659,7 +659,12 @@ def find_residual_group(sharing_group, layer_name, parser_, groups, model):
         return None
 
 
-def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func, gmode=False, dataset="imagenet2012", custom_objects=None):
+def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func, num_iters=100, gmode=False, dataset="imagenet2012", sub_path=None, masking=None, custom_objects=None):
+
+    if sub_path is not None:
+        save_path_ = os.path.join(save_path, sub_path)
+        if not os.path.exists(save_path_):
+            os.mkdir(save_path_)
 
     parsers = [
         PruningNNParser(subnet, custom_objects=custom_objects) for subnet in subnets
@@ -699,71 +704,118 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
     for k, data in enumerate(datagen):
         y = gmodel(data[0])
         data_holder.append((data[0], y))
-        if k == 256:
+        if k == 512:
             break
 
     test_model = model
-    for _ in range(num_steps):
-        
-        min_value = 0
-        min_mask = None
-        for gidx, mask in enumerate(masks):
-            if len(mask) != 3:
-                continue
+    mask_history = set()
+    if masking is None:
+        for _ in range(num_masks):
+            
+            max_value = 0
+            max_mask = None
+            max_pair = None
+            for gidx, mask in enumerate(masks):
+                if len(mask) <= 1:
+                    continue
 
-            for idx, v in enumerate(mask):
-                
-                masksnn[gidx][idx][idx] = 0 # masking
-                masks[gidx][idx] = 0
+                for idx, v in enumerate(mask):
 
-                masksnn_ = copy.deepcopy(masksnn)
+                    if (gidx, idx) in mask_history:
+                        continue
+                    
+                    masksnn[gidx][idx][idx] = 0 # masking
+                    masks[gidx][idx] = 0
 
-                select_submodel(
-                    model_backup,
-                    model,
-                    model_handler,
-                    dataset,
-                    gates_info,
-                    gidx,
-                    idx,
-                    masksnn_,
-                    groups,
-                    parser,
-                    data_holder)
+                    masksnn_ = copy.deepcopy(masksnn)
+                    masks_ = copy.deepcopy(masks)
 
-                test_model = remove_skip_edge(model_backup, model, parser, groups, masksnn_)
+                    select_submodel(
+                        model_backup,
+                        model,
+                        model_handler,
+                        dataset,
+                        gates_info,
+                        gidx,
+                        idx,
+                        masksnn_,
+                        groups,
+                        parser,
+                        data_holder)
 
-                target = None
-                for layer in test_model.layers:
-                    if len(layer.get_weights()) > 0:
+                    test_model = remove_skip_edge(model_backup, model, parser, groups, masksnn_)
+
+                    tf.keras.utils.plot_model(test_model, "temp_test_model.pdf", show_shapes=True)
+
+                    target = None
+                    for layer in test_model.layers:
+                        if len(layer.get_weights()) > 0:
+                            if "copied" in layer.name:
+                                w = model.get_layer(cname2name(layer.name)).get_weights()
+                                #w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
+                                layer.set_weights(w)
+                            else:
+                                layer.set_weights(model.get_layer(layer.name).get_weights())
+
                         if "copied" in layer.name:
-                            w = model.get_layer(cname2name(layer.name)).get_weights()
-                            w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
-                            layer.set_weights(w)
-                        else:
-                            layer.set_weights(model.get_layer(layer.name).get_weights())
+                            target = layer.name
+                    
+                    test_gmodel, test_parser, _, test_pc = get_gmodel(dataset, test_model, model_handler, gates_info=gates_info)
 
-                    if "copied" in layer.name:
-                        target = layer.name
-                
-                test_gmodel, test_parser, _, test_pc = get_gmodel(dataset, test_model, model_handler, gates_info=gates_info)
-                gate = test_gmodel.get_layer("gate_25")
-                num_gates = gate.gates.shape[0]
-                gate.gates.assign(np.zeros(num_gates,))
+                    gate = test_gmodel.get_layer(test_pc.l2g[groups[gidx][idx][2][0][0]])
+                    num_gates = gate.gates.shape[0]
+                    gate.gates.assign(np.zeros(num_gates,))
 
-                print(target)
-                print(gate.name)
-                tf.keras.utils.plot_model(test_gmodel, "gogo.pdf")
-                model_handler.compile(test_gmodel, run_eagerly=False)
-                (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=100)
-                print(test_gmodel.evaluate(test_data_gen, verbose=1)[1])
-                break
+                    print(target)
+                    print(gate.name)
+                    model_handler.compile(test_gmodel, run_eagerly=False)
+                    (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=100)
+                    value = test_gmodel.evaluate(test_data_gen, verbose=1)[1]
+                    print(value)
+                    if max_mask is None or value > max_value:
+                        max_value = value
+                        max_mask = (gidx, idx)
+                        max_pair = (masks_, masksnn_)
 
-                masksnn[gidx][idx][idx] = 1 # restore
-                masks[gidx][idx] = 1
-            break
+                    masksnn[gidx][idx][idx] = 1 # restore
+                    masks[gidx][idx] = 1
 
-    model = test_model
+            assert max_mask is not None
+            masks, masksnn = max_pair
+            mask_history.add(max_mask)
+    else:
+        masks, masksnn = masking
+
+        # complete masksnn
+        for gidx, mask in enumerate(masks):
+            for idx, v in enumerate(mask):
+                if mask[idx] == 0:
+                    select_submodel(
+                        model_backup,
+                        model,
+                        model_handler,
+                        dataset,
+                        gates_info,
+                        gidx,
+                        idx,
+                        masksnn,
+                        groups,
+                        parser,
+                        data_holder)
+
+        mask_history.add(None) # dummy: do nothing
+
+    if len(mask_history) > 0:
+        test_model = remove_skip_edge(model_backup, model, parser, groups, masksnn)
+        for layer in test_model.layers:
+            if len(layer.get_weights()) > 0:
+                if "copied" in layer.name:
+                    w = model.get_layer(cname2name(layer.name)).get_weights()
+                    #w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
+                    layer.set_weights(w)
+                else:
+                    layer.set_weights(model.get_layer(layer.name).get_weights())
+        model = test_model
 
     gates_info = {}
     removed_layers = set()
@@ -775,18 +827,11 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
     headers = {}
     masked = []
     split_flag = {}
-    for it in range(100):
+    for it in range(num_iters):
 
         # conduct pruning
         (cscore, grads, raw_grads), continue_info, temp_output = prune(dataset, model, model_handler, target_ratio=0.5, continue_info=continue_info, gates_info=gates_info, dump=False)
         gmodel, l2g_, inv_groups_, sharing_groups_, parser_, pc_ = continue_info # sharing groups (different from `groups`)
-
-        data_holder = []
-        for k, data in enumerate(datagen):
-            y = gmodel(data[0])
-            data_holder.append((data[0], y))
-            if k == 256:
-                break
 
         # one-time update
         if l2g is None:
@@ -801,9 +846,9 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
             exists.add(layer.name)
         
         if temp_output is not None:
-            if not os.path.exists(save_path):
-                os.mkdir(save_path)
-            tf.keras.models.save_model(temp_output, save_path+"/"+str(it-1)+".h5")
+            if not os.path.exists(save_path_):
+                os.mkdir(save_path_)
+            tf.keras.models.save_model(temp_output, save_path_+"/"+str(it-1)+"_temp.h5")
 
         # init
         if len(gates_info) == 0:
@@ -857,7 +902,7 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
                     if layer.name not in gates_info: # copied + sharing case
                         gates_info[layer.name] = gmodel.get_layer(l2g_[layer.name]).gates.numpy()
                     gates = gates_info[layer.name]
-                    if np.sum(gates) < 3.0:
+                    if np.sum(gates) < min_channels:
                         continue
                     min_val_, min_idx_ = find_min(
                         score,
@@ -891,9 +936,9 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
 
         tf.keras.utils.plot_model(ccmodel, "temp.pdf", show_shapes=True)
         
-        if not os.path.exists(save_path):
-            os.mkdir(save_path)
-        tf.keras.models.save_model(ccmodel, save_path+"/"+str(it-1)+".h5")
+        if not os.path.exists(save_path_):
+            os.mkdir(save_path_)
+        tf.keras.models.save_model(ccmodel, save_path_+"/"+str(it-1)+".h5")
 
         for layer in gmodel.layers:
             if layer.__class__.__name__ == "Conv2D":
@@ -904,21 +949,7 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
                     gates = gates_info[oname]
                 gmodel.get_layer(l2g_[layer.name]).gates.assign(gates)
 
-    # cutting
-    xxx
-
-    cmodel_groups = [[] for _ in range(len(groups))]
-    for k, (group, subnet, local_parser, feat, local_groups) in enumerate(zip(groups, subnets, parsers, feat_data, local_group_info)):
-        local_include = [curr_include[k]]
-        psets = construct_pathset(local_groups, local_include)
-        cmodel = psets2model(subnet, local_groups, psets, local_parser, custom_objects)
-        cmodel_groups[k].append(cmodel)
-    make_train_model(model, groups, cmodel_groups, scale=1.0, teacher_freeze=True)
-
-    psets = construct_pathset(groups, curr_include)
-    cmodel = psets2model(model, groups, psets, parser, custom_objects)
-
-    return cmodel
+    return ccmodel
 
 def parse(model, parser):
 
@@ -976,33 +1007,129 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
             layer for layer in model.layers if parser.torder[bottom] <= parser.torder[layer.name] and\
                 parser.torder[layer.name] <= parser.torder[top]
         ]
-        
         subnet, _, _ = parser.get_subnet(layers, model, custom_objects=custom_objects)
 
         if len(subnet.inputs) > 1:
             continue
         new_groups.append(g)
-
         subnet = change_dtype(subnet, "float32", custom_objects=custom_objects)
-
         tf.keras.utils.plot_model(subnet, "%d.pdf"%i)
         subnets.append(subnet)
-    
-    cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, gmode, dataset, custom_objects)
 
-    tf.keras.utils.plot_model(cmodel, "model.pdf", show_shapes=True)
-    tf.keras.models.save_model(cmodel, "%s_75.h5" % model_type)
+    global num_masks, pick_ratio, window_size, num_remove, min_channels
 
-    print(model.summary())
-    print(cmodel.summary())
-    
+    """
+    pick_ratios = [0.5, 0.75, 1.0]
+    num_rep = 3
+    for _ in range(num_rep):
+        for num_masks_ in range(1, 4):
+            num_masks = num_masks_
+            for prnum in range(3):
+                pick_ratio = pick_ratios[prnum]
+                for min_channels_ in range(2, 6):
+                    min_channels = min_channels_
+
+                    sub_path = "%d_%d_%f_%d" % (_, num_masks, pick_ratio, min_channels)
+                    cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=11, gmode=gmode, dataset=dataset, sub_path=sub_path, custom_objects=custom_objects)
+    """
+
+    num_rep = 3
+    masks = [[] for _ in range(len(groups))]
+    for i, g in enumerate(groups):
+        for item in g:
+            masks[i].append(1)
+
+    # removing skip edges debugging
+    masksnn = []
+    for mask in masks:
+        masknn = []
+        for idx, v in enumerate(mask):
+            submask = []
+            for idx_, u in enumerate(mask):
+                if idx_ == idx:
+                    submask.append(v)
+                else:
+                    submask.append(0)
+            submask.append(0)
+            masknn.append(submask)
+        masksnn.append(masknn)
+
+    for _ in range(1, num_rep):
+        for gidx, mask in enumerate(masks):
+            if len(mask) <= 1:
+                continue
+
+            for idx, v in enumerate(mask):
+
+                masksnn[gidx][idx][idx] = 0 # masking
+                masks[gidx][idx] = 0
+
+                masksnn_ = copy.deepcopy(masksnn) # masksnn will be changed in evaluate().
+                masks_ = copy.deepcopy(masks)
+
+                masking = (masks_, masksnn_)
+
+                sub_path = "masking_%d_%d_%d" % (_, gidx, idx)
+                cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=11, gmode=gmode, dataset=dataset, sub_path=sub_path, masking=masking, custom_objects=custom_objects)
+
+                masksnn[gidx][idx][idx] = 1 # restore
+                masks[gidx][idx] = 1
+
     return cmodel
+
+def evaluate_masking(evaluate_func, groups, num_rep):
+
+    masks = [[] for _ in range(len(groups))]
+    for i, g in enumerate(groups):
+        for item in g:
+            masks[i].append(1)
+
+    # removing skip edges debugging
+    masksnn = []
+    for mask in masks:
+        masknn = []
+        for idx, v in enumerate(mask):
+            submask = []
+            for idx_, u in enumerate(mask):
+                if idx_ == idx:
+                    submask.append(v)
+                else:
+                    submask.append(0)
+            submask.append(0)
+            masknn.append(submask)
+        masksnn.append(masknn)
+
+    for _ in range(1, num_rep):
+        for gidx, mask in enumerate(masks):
+            if len(mask) <= 1:
+                continue
+
+            for idx, v in enumerate(mask):
+
+                masksnn[gidx][idx][idx] = 0 # masking
+                masks[gidx][idx] = 0
+
+                masksnn_ = copy.deepcopy(masksnn) # masksnn will be changed in evaluate().
+                masks_ = copy.deepcopy(masks)
+
+                masking = (masks_, masksnn_)
+
+                sub_path = "masking_%d_%d_%d" % (rep, gidx, idx)
+                cmodel = evaluate_func(masking)
+
+                masksnn[gidx][idx][idx] = 1 # restore
+                masks[gidx][idx] = 1
+
+    return cmodel
+
+
 
 def apply_rewiring(train_data_generator, teacher, model_handler, gated_model, groups, l2g, parser, target_ratio, save_dir, save_prefix, save_steps, train_func, model_type="efnet", dataset="imagenet2012", custom_objects=None):
 
+    global save_path
+    save_path = save_dir
+    if not os.path.exists(save_dir):
+        os.mkdir(save_dir)
     rewire(train_data_generator, teacher, model_handler, parser, train_func, True, model_type, dataset, custom_objects)
 
-
     xxx
-
-
