@@ -26,14 +26,14 @@ with_label = True
 with_distillation = False
 augment = False
 period = 25
-num_remove = 500
+num_remove = 505
 num_masks = 1
-pick_ratio = 0.5
-window_size = 500
+pick_ratio = 1.0
+droprate = 0.25
+window_size = 505
+pre_epochs = 0
 min_channels = 2 # min channels + 1
 save_path = "saved_grad_%d" % (window_size)
-#save_path = "save_base3"
-print(save_path)
 
 @njit
 def find_min(cscore, gates, min_val, min_idx, lidx, ncol):
@@ -110,14 +110,15 @@ def prune_step(X, model, teacher_logits, y, num_iter, groups, l2g, norm, inv_gro
                 for bidx in range(num_batches):
                     grad = 0
                     for lidx, layer in enumerate(group):
+                        """
                         flag = False # copyflag
                         for l in g2l[layer.name]:
                             if "_copied_" in l:
                                 flag = True
                                 break
                         if not flag:
-                            grad += layer.grad_holder[bidx]
-
+                        """
+                        grad += layer.grad_holder[bidx]
                     grad = pow(grad, 2)
                     sum_ += tf.reduce_sum(grad, axis=0)
 
@@ -292,6 +293,12 @@ def extract_body(idx, next_group, parser, olayer_dict, new_input=None):
 
     left = next_group[1]
     right = next_group[0]
+
+    if left[1] >= right[1]:
+        temp = left
+        left = right
+        right = temp
+
     assert left[1] < right[1]
     layers_ = [(olayer_dict[layer]["name"], parser.torder[layer]) for layer in olayer_dict]
     input_layer = None
@@ -322,8 +329,13 @@ def extract_body(idx, next_group, parser, olayer_dict, new_input=None):
 
     assert input_layer is not None 
 
-    rewire_copied_body(idx, layers, input_layer, new_input)
+    if olayer_dict[left[0]]["class_name"] == "Activation":
+        if olayer_dict[olayer_dict[left[0]]["inbound_nodes"][0][0][0]]["class_name"] == "Add": # hard coding for resnet
+            input_layer = left[0]
 
+    if olayer_dict[left[0]]["class_name"] == "Activation":
+        layers.append(copy.deepcopy(olayer_dict[left[0]]))
+    rewire_copied_body(idx, layers, input_layer, new_input)
     return layers, str(idx)+"_copied_"+holder, holder
 
 def get_conn_to(name, parser):
@@ -362,52 +374,64 @@ def select_submodel(
         max_picks += 1
     num_picks = max(int(max_picks * pick_ratio), 1)
     assert num_picks >= 1
-    for pick in range(num_picks):
 
-        min_val = None
-        min_iidx = -1
+    if num_picks == max_picks:
+        print("100% submask")
         for iidx in range(len(mask)+1):
             if iidx <= idx:
                 continue
 
-            if submask[iidx] == 1:
-                continue
-
             submask[iidx] = 1
-            model_ = remove_skip_edge(basemodel, curr_model, parser, groups, remove_masks)
-            submask[iidx] = 0
+    else:
+        for pick in range(num_picks):
 
-            #tf.keras.utils.plot_model(model_, "temp_%d_%d.pdf" % (idx, iidx), show_shapes=True)
+            min_val = None
+            min_iidx = -1
+            for iidx in range(len(mask)+1):
+                if iidx <= idx:
+                    continue
 
-            for layer in model_.layers:
-                if len(layer.get_weights()) > 0:
-                    if "copied" in layer.name:
-                        w = curr_model.get_layer(cname2name(layer.name)).get_weights()
-                        #w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
-                        layer.set_weights(w)
-                    else:
-                        layer.set_weights(curr_model.get_layer(layer.name).get_weights())
+                if submask[iidx] == 1:
+                    continue
 
-            gmodel_ = get_gmodel(dataset, model_, model_handler, gates_info=gates_info)[0]
-            sum_ = 0
-            for data, y in data_holder:
-                output2 = gmodel_(data)
-                sum_ += tf.keras.metrics.kl_divergence(y, output2)
-            sum_ /= len(data_holder)
-            sum_ = np.average(sum_)
-            print(iidx, sum_)
-            if min_val is None or sum_ < min_val:
-                min_val = sum_
-                min_iidx = iidx
+                submask[iidx] = 1
+                model_ = remove_skip_edge(basemodel, curr_model, parser, groups, remove_masks)
+                submask[iidx] = 0
 
-        if min_val is None: # one case.
-            break
+                #tf.keras.utils.plot_model(model_, "temp_%d_%d.pdf" % (idx, iidx), show_shapes=True)
 
-        if min_iidx != -1:
-            print(min_iidx, " is selected...")
-            submask[min_iidx] = 1
-        else:
-            print("min_iidx is -1.")
+                for layer in model_.layers:
+                    if len(layer.get_weights()) > 0:
+                        if "copied" in layer.name:
+                            w = curr_model.get_layer(cname2name(layer.name)).get_weights()
+                            w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
+                            if len(layer.get_weights()) == len(w):
+                                layer.set_weights(w)
+                            else:
+                                layer.set_weights([w[0]])
+                        else:
+                            layer.set_weights(curr_model.get_layer(layer.name).get_weights())
+
+                gmodel_ = get_gmodel(dataset, model_, model_handler, gates_info=gates_info)[0]
+                sum_ = 0
+                for data, y in data_holder:
+                    output2 = gmodel_(data)
+                    sum_ += tf.keras.metrics.kl_divergence(y, output2)
+                sum_ /= len(data_holder)
+                sum_ = np.average(sum_)
+                print(iidx, sum_)
+                if min_val is None or sum_ < min_val:
+                    min_val = sum_
+                    min_iidx = iidx
+
+            if min_val is None: # one case.
+                break
+
+            if min_iidx != -1:
+                print(min_iidx, " is selected...")
+                submask[min_iidx] = 1
+            else:
+                print("min_iidx is -1.")
 
 def create_submodel(gidx, idx, mask, submask, groups, first_masked_idx, num_flow, olayer_dict, layer_dict, parser, conn_to, tidx, new_add=None):
 
@@ -438,6 +462,9 @@ def create_submodel(gidx, idx, mask, submask, groups, first_masked_idx, num_flow
         if layer_dict[key]["class_name"] == "Activation":
             act_dict = copy.deepcopy(layer_dict[key])
             break
+        elif layer_dict[key]["class_name"] == "ReLU":
+            act_dict = copy.deepcopy(layer_dict[key])
+            break
     assert act_dict is not None
 
     for iidx, v in enumerate(submask):
@@ -460,7 +487,8 @@ def create_submodel(gidx, idx, mask, submask, groups, first_masked_idx, num_flow
             act_dict_ = copy.deepcopy(act_dict)
             act_dict_["name"] = output_name+"_act"
             act_dict_["config"]["name"] = act_dict_["name"]
-            act_dict_["config"]["activation"] = "relu"
+            if act_dict["class_name"] != "ReLU":
+                act_dict_["config"]["activation"] = "relu"
             act_dict_["inbound_nodes"] = [[[output_name, 0, 0, {}]]]
             subnet.append(act_dict_)
             output_name = act_dict_["name"]
@@ -603,8 +631,12 @@ def remove_skip_edge(basemodel, curr_model, parser, groups, remove_masks, weight
             try:
                 if "copied_" in layer.name:
                     w = curr_model.get_layer(cname2name(layer.name)).get_weights()
-                    #w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
-                    layer.set_weights(w)
+                    w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
+                    if len(layer.get_weights()) == len(w):
+                        layer.set_weights(w)
+                    else:
+                        layer.set_weights([w[0]])
+
                 else:
                     layer.set_weights(curr_model.get_layer(layer.name).get_weights())
             except Exception as e:
@@ -752,8 +784,11 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
                         if len(layer.get_weights()) > 0:
                             if "copied" in layer.name:
                                 w = model.get_layer(cname2name(layer.name)).get_weights()
-                                #w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
-                                layer.set_weights(w)
+                                w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
+                                if len(layer.get_weights()) == len(w):
+                                    layer.set_weights(w)
+                                else:
+                                    layer.set_weights([w[0]])
                             else:
                                 layer.set_weights(model.get_layer(layer.name).get_weights())
 
@@ -811,11 +846,17 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
             if len(layer.get_weights()) > 0:
                 if "copied" in layer.name:
                     w = model.get_layer(cname2name(layer.name)).get_weights()
-                    #w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
-                    layer.set_weights(w)
+                    w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
+                    if len(layer.get_weights()) == len(w):
+                        layer.set_weights(w)
+                    else:
+                        layer.set_weights([w[0]])
                 else:
                     layer.set_weights(model.get_layer(layer.name).get_weights())
         model = test_model
+
+    if pre_epochs > 0:
+        train_func(model, pre_epochs, None)
 
     gates_info = {}
     removed_layers = set()
@@ -934,24 +975,44 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
         temp_gmodel, temp_parser, _, _ = get_gmodel(dataset, dump_model, model_handler, gates_info)
         ccmodel = temp_parser.cut(temp_gmodel)
 
-        tf.keras.utils.plot_model(ccmodel, "temp.pdf", show_shapes=True)
-        
         if not os.path.exists(save_path_):
             os.mkdir(save_path_)
         tf.keras.models.save_model(ccmodel, save_path_+"/"+str(it-1)+".h5")
+        tf.keras.utils.plot_model(ccmodel, "temp.pdf", show_shapes=True)
 
-        for layer in gmodel.layers:
-            if layer.__class__.__name__ == "Conv2D":
-                if layer.name in gates_info:
-                    gates = gates_info[layer.name]
-                elif "copied" in layer.name:
-                    oname = cname2name(layer.name)
-                    gates = gates_info[oname]
-                gmodel.get_layer(l2g_[layer.name]).gates.assign(gates)
+        if droprate > 0.0:
+
+            from droppath import DropPath
+            if custom_objects is None:
+                custom_objects = {"DropPath":DropPath}
+            if "DropPath" not in custom_objects:
+                custom_objects["DropPath"] = DropPath
+            ccparser = NNParser(ccmodel, custom_objects=custom_objects)
+            ccparser.parse()
+
+            drlayers = []
+            drpositions = []
+            for layer in ccmodel.layers:
+                if "_copied_" in layer.name and layer.__class__.__name__ == "Conv2D":
+                    dr = DropPath(droprate)
+                    drdict = {
+                        "name":layer.name+"_dr",
+                        "class_name":"DropPath",
+                        "config":dr.get_config()
+                    }
+                    drdict["config"]["name"] = drdict["name"]
+                    drlayers.append(drdict)
+                    drpositions.append(layer.name)
+
+            ccmodel = ccparser.insert_layers(drlayers, drpositions)
+     
+            if not os.path.exists(save_path_):
+                os.mkdir(save_path_)
+            tf.keras.models.save_model(ccmodel, save_path_+"/"+str(it-1)+"_dr.h5")
 
     return ccmodel
 
-def parse(model, parser):
+def parse(model, parser, model_type="efnet"):
 
     max_len = 4
     model_dict = json.loads(model.to_json())
@@ -993,7 +1054,7 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
     model = change_dtype(model, "float32", custom_objects=custom_objects)
     tf.keras.utils.plot_model(model, "omodel.pdf", show_shapes=True)
 
-    groups = parse(model, parser)
+    groups = parse(model, parser, model_type)
 
     subnets = []
     new_groups = []
@@ -1018,22 +1079,8 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
 
     global num_masks, pick_ratio, window_size, num_remove, min_channels
 
-    """
-    pick_ratios = [0.5, 0.75, 1.0]
-    num_rep = 3
-    for _ in range(num_rep):
-        for num_masks_ in range(1, 4):
-            num_masks = num_masks_
-            for prnum in range(3):
-                pick_ratio = pick_ratios[prnum]
-                for min_channels_ in range(2, 6):
-                    min_channels = min_channels_
+    """ prototype
 
-                    sub_path = "%d_%d_%f_%d" % (_, num_masks, pick_ratio, min_channels)
-                    cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=11, gmode=gmode, dataset=dataset, sub_path=sub_path, custom_objects=custom_objects)
-    """
-
-    num_rep = 3
     masks = [[] for _ in range(len(groups))]
     for i, g in enumerate(groups):
         for item in g:
@@ -1054,7 +1101,63 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
             masknn.append(submask)
         masksnn.append(masknn)
 
-    for _ in range(1, num_rep):
+    gidx = 4
+    idx = 0
+
+    masksnn[gidx][idx][idx] = 0 # masking
+    masks[gidx][idx] = 0
+
+    masksnn_ = copy.deepcopy(masksnn) # masksnn will be changed in evaluate().
+    masks_ = copy.deepcopy(masks)
+
+    masking = (masks_, masksnn_)
+
+    #sub_path = "masking_%d_%d" % (gidx, idx)
+    sub_path = "masking"
+
+    cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=12, gmode=gmode, dataset=dataset, sub_path=sub_path, masking=masking, custom_objects=custom_objects)
+    """
+
+    """
+    # outer parameter test
+    pick_ratios = [0.5, 0.75, 1.0]
+    num_rep = 3
+    for _ in range(num_rep):
+        for num_masks_ in range(1, 4):
+            num_masks = num_masks_
+            for prnum in range(3):
+                pick_ratio = pick_ratios[prnum]
+                for min_channels_ in range(2, 6):
+                    min_channels = min_channels_
+
+                    sub_path = "%d_%d_%f_%d" % (_, num_masks, pick_ratio, min_channels)
+                    cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=11, gmode=gmode, dataset=dataset, sub_path=sub_path, custom_objects=custom_objects)
+    """
+
+    #masking parameter test
+
+    num_rep = 1
+    masks = [[] for _ in range(len(groups))]
+    for i, g in enumerate(groups):
+        for item in g:
+            masks[i].append(1)
+
+    # removing skip edges debugging
+    masksnn = []
+    for mask in masks:
+        masknn = []
+        for idx, v in enumerate(mask):
+            submask = []
+            for idx_, u in enumerate(mask):
+                if idx_ == idx:
+                    submask.append(v)
+                else:
+                    submask.append(0)
+            submask.append(0)
+            masknn.append(submask)
+        masksnn.append(masknn)
+
+    for _ in range(num_rep):
         for gidx, mask in enumerate(masks):
             if len(mask) <= 1:
                 continue
