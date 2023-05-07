@@ -65,10 +65,10 @@ class SimplePruningGate(layers.Layer, SimplePruningGateFormula):
                 if self.collecting:
                     if len(x.shape) == 4:
                         self.grad_holder.append(\
-                            tf.reduce_sum(dy * x, axis=[1, 2]))
+                            tf.reduce_sum(dy * x, axis=[1, 2]).numpy())
                     elif len(x.shape) == 3:
                         self.grad_holder.append(\
-                            tf.reduce_sum(dy * x, axis=[1]))
+                            tf.reduce_sum(dy * x, axis=[1]).numpy())
                     else:
                         raise NotImplementedError()
                 return self.compute(dy), [ tf.zeros(self.ngates,) ]

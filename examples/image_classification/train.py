@@ -259,6 +259,8 @@ def train(dataset, model, model_name, model_handler, run_eagerly=False, callback
                                         epochs=epochs_,
                                         steps_per_epoch=iters)
 
+    return model
+
 
 def train_step(X, model, teacher_logits=None, y=None, ret_last_tensor=False):
 

@@ -64,9 +64,9 @@ from prep import add_augmentation, change_dtype
 from utils import optimizer_factory
 
 #from ray.tune.integration.horovod import DistributedTrainableCreator
-
+from droppath import DropPath
 custom_object_scope = {
-    "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer, "HvdMovingAverage":optimizer_factory.HvdMovingAverage
+    "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer, "HvdMovingAverage":optimizer_factory.HvdMovingAverage, "DropPath":DropPath
 }
 
 def get_total_channels(groups, model, parser):
@@ -213,8 +213,8 @@ def prune(
         gmodel = add_augmentation(gmodel, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope, update_batch_size=True)
         #model_handler.batch_size = backup
 
-        config["mode"] = "distillation_label_free"
-        train_func = lambda house: train(dataset, house, model_handler.get_name()+"_rewire", model_handler, run_eagerly=False, n_classes=n_classes, save_dir=save_dir, conf=config, epochs_=1)
+        config["mode"] = "finetune"
+        train_func = lambda model_, epochs_, save_dir_: train(dataset, model_, model_handler.get_name()+"_rewire", model_handler, run_eagerly=False, n_classes=n_classes, save_dir=save_dir_, conf=config, epochs_=epochs_)
 
         apply_rewiring(train_data_generator_, copied_model, model_handler, gmodel, ordered_groups, l2g, parser, target_ratio, save_dir+"/rewiring", model_handler.get_name()+postfix, save_steps=save_steps, train_func=train_func, model_type=model_handler.get_name(), dataset=dataset)
 
@@ -835,6 +835,12 @@ def run():
             mixed_precision.set_global_policy('mixed_float16')
             print(model)
             model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=position_set)
+
+        """
+        for layer in model.layers:
+            if layer.__class__.__name__ == "DropPath":
+                layer.drop_path_prob = 1.0
+        """
 
         if args.model_path2 is not None or args.distillation:
             print("distillation!")

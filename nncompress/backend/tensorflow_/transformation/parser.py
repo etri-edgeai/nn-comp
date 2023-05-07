@@ -168,6 +168,54 @@ class NNParser(object):
             else:
                 raise NotImplementedError("`output_shape` is neither a list nor a tuple.")
 
+
+    def insert_layers(self, layers, positions, custom_objects=None):
+        """This function inserts a layer after the layer specified by `position`.
+
+            # Arguments.
+                layer: dict, the layer dict to insert.
+                position: str, the layer name where the input layer is loacted after.
+                custom_objects: list
+
+            # Return.
+                inserted model.
+
+        """
+
+        model_dict = copy.deepcopy(self._model_dict)
+        layers_dict = {}
+        for layer_dict_ in model_dict["config"]["layers"]:
+            layers_dict[layer_dict_["config"]["name"]] = layer_dict_
+
+        for layer, position in zip(layers, positions):
+            layer_dict = copy.deepcopy(layer)
+            for inbound in layers_dict[position]["inbound_nodes"]:
+                if "inbound_nodes" not in layer_dict:
+                    layer_dict["inbound_nodes"] = []
+                layer_dict["inbound_nodes"].append([[position, 0, 0, {}]]) # 0, 0, {} -> may be updated.
+
+            # find target
+            targets = []
+            for name, target in layers_dict.items():
+                for inbound in target["inbound_nodes"]:
+                    if type(inbound[0]) == list:
+                        for ib in inbound:
+                            if ib[0] == position:
+                                ib[0] = layer["name"]
+                    else: # must be str
+                        if inbound[0] == position:
+                            inbound[0] = layer["name"]
+
+            model_dict["config"]["layers"].append(layer_dict)
+
+        model_json = json.dumps(model_dict)
+        ret = tf.keras.models.model_from_json(model_json, custom_objects=self._custom_objects)
+        for layer in ret.layers:
+            if len(layer.get_weights()) > 0:
+                layer.set_weights(self._model.get_layer(layer.name).get_weights())
+
+        return ret
+
     def replace_block(self, replace_mappings, in_maps=None, ex_maps=None, custom_objects=None):
         """This function replaces a block with another block in your NN model.
         A block is defined to be a list of layers each of which is written in a dictionary.
