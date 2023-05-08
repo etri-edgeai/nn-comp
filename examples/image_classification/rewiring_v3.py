@@ -1128,10 +1128,10 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
     masksnn = []
     for mask in masks:
         masknn = []
-        for idx, v in enumerate(mask):
+        for _idx, v in enumerate(mask):
             submask = []
             for idx_, u in enumerate(mask):
-                if idx_ == idx:
+                if idx_ == _idx:
                     submask.append(v)
                 else:
                     submask.append(0)
@@ -1158,7 +1158,7 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
                         for a in pre_epochs_:
                             pre_epochs = a
 
-                            print(num_masks, pick_ratio, min_channels, droprate, pre_epochs)
+                            print(num_masks, pick_ratio, min_channels, droprate, pre_epochs, num_rep)
                             if gidx != -1 and idx != -1:
 
                                 masksnn[gidx][idx][idx] = 0 # masking
@@ -1171,6 +1171,9 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
                                 sub_path = "masking_targeted_%d_%d_%d" % (_, gidx, idx)
                                 cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=num_iters, gmode=gmode, dataset=dataset, sub_path=sub_path, masking=masking, custom_objects=custom_objects)
 
+                                masksnn[gidx][idx][idx] = 1 # restore
+                                masks[gidx][idx] = 1
+
                             elif gidx == "greedy":
 
                                 sub_path = "masking_%d_%d_%f_%d_greedy_%f_%d" % (_, num_masks, pick_ratio, min_channels, droprate, pre_epochs)
@@ -1178,25 +1181,43 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
 
                             else:
 
-                                for gidx, mask in enumerate(masks):
+                                stk = []
+                                for gidx_, mask in enumerate(masks):
                                     if len(mask) <= 1:
                                         continue
+                                    for idx_, v in enumerate(mask):
+                                        stk.append([(gidx_, idx_)])
 
-                                    for idx, v in enumerate(mask):
+                                cnt = 0
+                                while len(stk) > 0:
+                                    curr = stk.pop()
+                                    if len(curr) < num_masks:
+                                        for gidx_, mask in enumerate(masks):
+                                            if len(mask) <= 1:
+                                                continue
+                                            for idx_, v in enumerate(mask_):
+                                                if (gidx_, idx_) not in curr:
+                                                    curr_ = copy.deepcopy(curr)
+                                                    curr_.append((gidx_, idx_))
+                                                    stk.append(curr_)
+                                        continue
 
-                                        masksnn[gidx][idx][idx] = 0 # masking
-                                        masks[gidx][idx] = 0
+                                    for gidx_, idx_ in curr:
+                                        masksnn[gidx_][idx_][idx_] = 0 # masking
+                                        masks[gidx_][idx_] = 0
 
-                                        masksnn_ = copy.deepcopy(masksnn) # masksnn will be changed in evaluate().
-                                        masks_ = copy.deepcopy(masks)
+                                    masksnn_ = copy.deepcopy(masksnn) # masksnn will be changed in evaluate().
+                                    masks_ = copy.deepcopy(masks)
 
-                                        masking = (masks_, masksnn_)
-                                        sub_path = "masking_%d_%d_%f_%d_%d_%d_%f_%d" % (_, num_masks, pick_ratio, min_channels, gidx, idx, droprate, pre_epochs)
+                                    masking = (masks_, masksnn_)
+                                    sub_path = "masking_%d_%d_%f_%d_%f_%d_%d" % (_, num_masks, pick_ratio, min_channels, droprate, pre_epochs, cnt)
+                                    cnt += 1
 
-                                        cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=num_iters, gmode=gmode, dataset=dataset, sub_path=sub_path, masking=masking, custom_objects=custom_objects)
+                                    cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=num_iters, gmode=gmode, dataset=dataset, sub_path=sub_path, masking=masking, custom_objects=custom_objects)
 
-                                        masksnn[gidx][idx][idx] = 1 # restore
-                                        masks[gidx][idx] = 1
+                                    for gidx_, idx_ in curr:
+                                        masksnn[gidx_][idx_][idx_] = 1 # restore
+                                        masks[gidx_][idx_] = 1
 
     return cmodel
 
