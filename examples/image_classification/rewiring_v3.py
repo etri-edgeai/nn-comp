@@ -1140,6 +1140,13 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
         masksnn.append(masknn)
 
     for _ in range(num_rep):
+        
+        if gidx == "base":
+            num_masks = 0
+            sub_path = "baseline_%d" % _
+            cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=num_iters, gmode=gmode, dataset=dataset, sub_path=sub_path, custom_objects=custom_objects)
+            continue
+ 
         for i in num_masks_:
             num_masks = i
             for j in pick_ratio_:
@@ -1163,6 +1170,11 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
                                 masking = (masks_, masksnn_)
                                 sub_path = "masking_targeted_%d_%d_%d" % (_, gidx, idx)
                                 cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=num_iters, gmode=gmode, dataset=dataset, sub_path=sub_path, masking=masking, custom_objects=custom_objects)
+
+                            elif gidx == "greedy":
+
+                                sub_path = "masking_%d_%d_%f_%d_greedy_%f_%d" % (_, num_masks, pick_ratio, min_channels, droprate, pre_epochs)
+                                cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=num_iters, gmode=gmode, dataset=dataset, sub_path=sub_path, custom_objects=custom_objects)
 
                             else:
 
