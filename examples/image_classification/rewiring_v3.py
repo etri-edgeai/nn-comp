@@ -3,6 +3,7 @@ import json
 import os
 import copy
 
+import yaml
 import tensorflow as tf
 from tensorflow import keras
 import numpy as np
@@ -20,6 +21,7 @@ from prep import add_augmentation, change_dtype
 from train import iteration_based_train, train_step, load_dataset
 from rewiring import decode, get_add_inputs, replace_input
 
+
 max_iters = 25
 lr_mode = 0
 with_label = True
@@ -29,8 +31,8 @@ period = 25
 num_remove = 505
 num_masks = 1
 pick_ratio = 1.0
-droprate = 0.25
 window_size = 505
+droprate = 0.25
 pre_epochs = 0
 min_channels = 2 # min channels + 1
 save_path = "saved_grad_%d" % (window_size)
@@ -1054,6 +1056,44 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
     model = change_dtype(model, "float32", custom_objects=custom_objects)
     tf.keras.utils.plot_model(model, "omodel.pdf", show_shapes=True)
 
+    global num_masks, pick_ratio, window_size, num_remove, min_channels, droprate, pre_epochs
+    gidx = -1
+    idx = -1
+    if os.path.exists("config.yaml"):
+        with open("config.yaml", 'r') as stream:
+            try:
+                config = yaml.safe_load(stream)
+            except yaml.YAMLError as exc:
+                print(exc)
+
+        num_rep = config["num_rep"]
+        num_masks_ = config["num_masks"]
+        if type(num_masks_) != list:
+            num_masks_ = [num_masks_]
+
+        pick_ratio_ = config["pick_ratio"]
+        if type(pick_ratio_) != list:
+            pick_ratio_ = [pick_ratio_]
+
+        window_size = config["window_size"]
+        num_remove = config["num_remove"]
+
+        min_channels_ = config["min_channels"]
+        if type(min_channels_) != list:
+            min_channels_ = [min_channels_]
+
+        droprate_ = config["droprate"]
+        if type(droprate_) != list:
+            droprate_ = [droprate_]
+
+        pre_epochs_ = config["pre_epochs"]
+        if type(pre_epochs_) != list:
+            pre_epochs_ = [pre_epochs_]
+
+        gidx = config["gidx"]
+        idx = config["idx"]
+        num_iters = config["num_iters"]
+
     groups = parse(model, parser, model_type)
 
     subnets = []
@@ -1077,66 +1117,8 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
         tf.keras.utils.plot_model(subnet, "%d.pdf"%i)
         subnets.append(subnet)
 
-    global num_masks, pick_ratio, window_size, num_remove, min_channels
 
-    """ prototype
-
-    masks = [[] for _ in range(len(groups))]
-    for i, g in enumerate(groups):
-        for item in g:
-            masks[i].append(1)
-
-    # removing skip edges debugging
-    masksnn = []
-    for mask in masks:
-        masknn = []
-        for idx, v in enumerate(mask):
-            submask = []
-            for idx_, u in enumerate(mask):
-                if idx_ == idx:
-                    submask.append(v)
-                else:
-                    submask.append(0)
-            submask.append(0)
-            masknn.append(submask)
-        masksnn.append(masknn)
-
-    gidx = 4
-    idx = 0
-
-    masksnn[gidx][idx][idx] = 0 # masking
-    masks[gidx][idx] = 0
-
-    masksnn_ = copy.deepcopy(masksnn) # masksnn will be changed in evaluate().
-    masks_ = copy.deepcopy(masks)
-
-    masking = (masks_, masksnn_)
-
-    #sub_path = "masking_%d_%d" % (gidx, idx)
-    sub_path = "masking"
-
-    cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=12, gmode=gmode, dataset=dataset, sub_path=sub_path, masking=masking, custom_objects=custom_objects)
-    """
-
-    """
-    # outer parameter test
-    pick_ratios = [0.5, 0.75, 1.0]
-    num_rep = 3
-    for _ in range(num_rep):
-        for num_masks_ in range(1, 4):
-            num_masks = num_masks_
-            for prnum in range(3):
-                pick_ratio = pick_ratios[prnum]
-                for min_channels_ in range(2, 6):
-                    min_channels = min_channels_
-
-                    sub_path = "%d_%d_%f_%d" % (_, num_masks, pick_ratio, min_channels)
-                    cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=11, gmode=gmode, dataset=dataset, sub_path=sub_path, custom_objects=custom_objects)
-    """
-
-    #masking parameter test
-
-    num_rep = 1
+    # prototype
     masks = [[] for _ in range(len(groups))]
     for i, g in enumerate(groups):
         for item in g:
@@ -1158,73 +1140,53 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
         masksnn.append(masknn)
 
     for _ in range(num_rep):
-        for gidx, mask in enumerate(masks):
-            if len(mask) <= 1:
-                continue
+        for i in num_masks_:
+            num_masks = i
+            for j in pick_ratio_:
+                pick_ratio = j
+                for k in min_channels_:
+                    min_channels = k
+                    for q in droprate_:
+                        droprate = q
+                        for a in pre_epochs_:
+                            pre_epochs = a
 
-            for idx, v in enumerate(mask):
+                            print(num_masks, pick_ratio, min_channels, droprate, pre_epochs)
+                            if gidx != -1 and idx != -1:
 
-                masksnn[gidx][idx][idx] = 0 # masking
-                masks[gidx][idx] = 0
+                                masksnn[gidx][idx][idx] = 0 # masking
+                                masks[gidx][idx] = 0
 
-                masksnn_ = copy.deepcopy(masksnn) # masksnn will be changed in evaluate().
-                masks_ = copy.deepcopy(masks)
+                                masksnn_ = copy.deepcopy(masksnn) # masksnn will be changed in evaluate().
+                                masks_ = copy.deepcopy(masks)
 
-                masking = (masks_, masksnn_)
+                                masking = (masks_, masksnn_)
+                                sub_path = "masking_targeted_%d_%d_%d" % (_, gidx, idx)
+                                cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=num_iters, gmode=gmode, dataset=dataset, sub_path=sub_path, masking=masking, custom_objects=custom_objects)
 
-                sub_path = "masking_%d_%d_%d" % (_, gidx, idx)
-                cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=11, gmode=gmode, dataset=dataset, sub_path=sub_path, masking=masking, custom_objects=custom_objects)
+                            else:
 
-                masksnn[gidx][idx][idx] = 1 # restore
-                masks[gidx][idx] = 1
+                                for gidx, mask in enumerate(masks):
+                                    if len(mask) <= 1:
+                                        continue
 
-    return cmodel
+                                    for idx, v in enumerate(mask):
 
-def evaluate_masking(evaluate_func, groups, num_rep):
+                                        masksnn[gidx][idx][idx] = 0 # masking
+                                        masks[gidx][idx] = 0
 
-    masks = [[] for _ in range(len(groups))]
-    for i, g in enumerate(groups):
-        for item in g:
-            masks[i].append(1)
+                                        masksnn_ = copy.deepcopy(masksnn) # masksnn will be changed in evaluate().
+                                        masks_ = copy.deepcopy(masks)
 
-    # removing skip edges debugging
-    masksnn = []
-    for mask in masks:
-        masknn = []
-        for idx, v in enumerate(mask):
-            submask = []
-            for idx_, u in enumerate(mask):
-                if idx_ == idx:
-                    submask.append(v)
-                else:
-                    submask.append(0)
-            submask.append(0)
-            masknn.append(submask)
-        masksnn.append(masknn)
+                                        masking = (masks_, masksnn_)
+                                        sub_path = "masking_%d_%d_%f_%d_%d_%d_%f_%d" % (_, num_masks, pick_ratio, min_channels, gidx, idx, droprate, pre_epochs)
 
-    for _ in range(1, num_rep):
-        for gidx, mask in enumerate(masks):
-            if len(mask) <= 1:
-                continue
+                                        cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=num_iters, gmode=gmode, dataset=dataset, sub_path=sub_path, masking=masking, custom_objects=custom_objects)
 
-            for idx, v in enumerate(mask):
-
-                masksnn[gidx][idx][idx] = 0 # masking
-                masks[gidx][idx] = 0
-
-                masksnn_ = copy.deepcopy(masksnn) # masksnn will be changed in evaluate().
-                masks_ = copy.deepcopy(masks)
-
-                masking = (masks_, masksnn_)
-
-                sub_path = "masking_%d_%d_%d" % (rep, gidx, idx)
-                cmodel = evaluate_func(masking)
-
-                masksnn[gidx][idx][idx] = 1 # restore
-                masks[gidx][idx] = 1
+                                        masksnn[gidx][idx][idx] = 1 # restore
+                                        masks[gidx][idx] = 1
 
     return cmodel
-
 
 
 def apply_rewiring(train_data_generator, teacher, model_handler, gated_model, groups, l2g, parser, target_ratio, save_dir, save_prefix, save_steps, train_func, model_type="efnet", dataset="imagenet2012", custom_objects=None):
