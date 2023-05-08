@@ -112,15 +112,13 @@ def prune_step(X, model, teacher_logits, y, num_iter, groups, l2g, norm, inv_gro
                 for bidx in range(num_batches):
                     grad = 0
                     for lidx, layer in enumerate(group):
-                        """
                         flag = False # copyflag
                         for l in g2l[layer.name]:
                             if "_copied_" in l:
                                 flag = True
                                 break
                         if not flag:
-                        """
-                        grad += layer.grad_holder[bidx]
+                            grad += layer.grad_holder[bidx]
                     grad = pow(grad, 2)
                     sum_ += tf.reduce_sum(grad, axis=0)
 
@@ -1090,8 +1088,7 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
         if type(pre_epochs_) != list:
             pre_epochs_ = [pre_epochs_]
 
-        gidx = config["gidx"]
-        idx = config["idx"]
+        indices = config["indices"]
         num_iters = config["num_iters"]
 
     groups = parse(model, parser, model_type)
@@ -1117,7 +1114,6 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
         tf.keras.utils.plot_model(subnet, "%d.pdf"%i)
         subnets.append(subnet)
 
-
     # prototype
     masks = [[] for _ in range(len(groups))]
     for i, g in enumerate(groups):
@@ -1141,7 +1137,7 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
 
     for _ in range(num_rep):
         
-        if gidx == "base":
+        if indices == "base":
             num_masks = 0
             sub_path = "baseline_%d" % _
             cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=num_iters, gmode=gmode, dataset=dataset, sub_path=sub_path, custom_objects=custom_objects)
@@ -1158,23 +1154,25 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
                         for a in pre_epochs_:
                             pre_epochs = a
 
-                            print(num_masks, pick_ratio, min_channels, droprate, pre_epochs, num_rep)
-                            if gidx != -1 and idx != -1:
+                            print(num_masks, pick_ratio, min_channels, droprate, pre_epochs, num_rep, indices)
+                            if type(indices) == list:
 
-                                masksnn[gidx][idx][idx] = 0 # masking
-                                masks[gidx][idx] = 0
+                                for gidx, idx in indices:
+                                    masksnn[gidx][idx][idx] = 0 # masking
+                                    masks[gidx][idx] = 0
 
                                 masksnn_ = copy.deepcopy(masksnn) # masksnn will be changed in evaluate().
                                 masks_ = copy.deepcopy(masks)
 
                                 masking = (masks_, masksnn_)
-                                sub_path = "masking_targeted_%d_%d_%d" % (_, gidx, idx)
+                                sub_path = "masking_targeted_%d_%f_%d_%f_%d_indices" % (_, pick_ratio, min_channels, droprate, pre_epochs)
                                 cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=num_iters, gmode=gmode, dataset=dataset, sub_path=sub_path, masking=masking, custom_objects=custom_objects)
 
-                                masksnn[gidx][idx][idx] = 1 # restore
-                                masks[gidx][idx] = 1
+                                for gidx, idx in indices:
+                                    masksnn[gidx][idx][idx] = 1 # restore
+                                    masks[gidx][idx] = 1
 
-                            elif gidx == "greedy":
+                            elif indices == "greedy":
 
                                 sub_path = "masking_%d_%d_%f_%d_greedy_%f_%d" % (_, num_masks, pick_ratio, min_channels, droprate, pre_epochs)
                                 cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=num_iters, gmode=gmode, dataset=dataset, sub_path=sub_path, custom_objects=custom_objects)
