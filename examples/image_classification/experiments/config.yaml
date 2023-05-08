@@ -1,0 +1,11 @@
+num_rep: 1
+num_iters: 12
+num_remove: 505
+window_size: 505
+num_masks: 1
+pick_ratio: 1.0
+droprate: 0.25
+pre_epochs: 0
+min_channels: 2
+gidx: 4
+idx: 0
