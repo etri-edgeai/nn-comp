@@ -64,9 +64,10 @@ from prep import add_augmentation, change_dtype
 from utils import optimizer_factory
 
 #from ray.tune.integration.horovod import DistributedTrainableCreator
+import reg as reg_
 from droppath import DropPath
 custom_object_scope = {
-    "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer, "HvdMovingAverage":optimizer_factory.HvdMovingAverage, "DropPath":DropPath
+    "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer, "HvdMovingAverage":optimizer_factory.HvdMovingAverage, "DropPath":DropPath, "Custom/ortho":reg_.OrthoRegularizer
 }
 
 def get_total_channels(groups, model, parser):
