@@ -1079,7 +1079,7 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
         ccmodel = temp_parser.cut(temp_gmodel)
 
         if reg_factor > 0.0:
-            ccmodel = remove_regularizer_if_one(ccmodel, is_masked_func=is_masked_func, mode=reg_mode, custom_objects=parser.custom_objects):
+            ccmodel = remove_regularizer_if_one(ccmodel, is_masked_func=is_masked_func, mode=reg_mode, custom_objects=parser.custom_objects)
 
         if not os.path.exists(save_path_):
             os.mkdir(save_path_)
