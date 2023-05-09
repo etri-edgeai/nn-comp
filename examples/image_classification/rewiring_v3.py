@@ -21,6 +21,7 @@ from prep import add_augmentation, change_dtype
 from train import iteration_based_train, train_step, load_dataset
 from rewiring import decode, get_add_inputs, replace_input
 
+import reg as reg_
 
 max_iters = 25
 lr_mode = 0
@@ -35,7 +36,14 @@ window_size = 505
 droprate = 0.25
 pre_epochs = 0
 min_channels = 2 # min channels + 1
+pruning_masked_only = False
+reg_factor = 0.0
+reg_opt = "Custom/ortho"
+reg_mode = "masked"
+reg_dim_mode = "rows"
 save_path = "saved_grad_%d" % (window_size)
+custom_object_scope = {"Custom/ortho": reg_.OrthoRegularizer}
+
 
 @njit
 def find_min(cscore, gates, min_val, min_idx, lidx, ncol):
@@ -262,6 +270,93 @@ def remove_input(target_dict, name):
                 removal = ib
         if removal is not None:
             flow.remove(removal)
+
+def is_masked(layer, groups, masks, torder):
+
+    if layer not in torder:
+        return False
+
+    for gidx, mask in enumerate(masks):
+        for idx, v in enumerate(mask):
+            if v == 0: # masked
+                left = groups[gidx][idx][2][0][1]
+                right = groups[gidx][idx][2][1][1]
+                
+                if left > right:
+                    temp = left
+                    left = right
+                    right = temp
+                
+                if left <= torder[layer] and torder[layer] <= right:
+                    return True
+    return False
+
+def add_regularizer(model, is_masked_func=None, mode="copied", custom_objects=None):
+    
+    if mode is None:
+        return model
+    elif mode == "masked":
+        assert is_masked_func is not None
+
+    model_dict = json.loads(model.to_json())
+    for layer in model_dict["config"]["layers"]:
+        if "Conv2D" in layer["class_name"]:
+            if mode == "all" or (mode == "copied" and "copied" in layer["config"]["name"]) or (mode == "masked" and is_masked_func(layer["config"]["name"])):
+                w = model.get_layer(layer["config"]["name"]).get_weights()[0]
+                flag = 0
+                for x in [int(v) for v in w.shape]:
+                    if x > 1:
+                        flag += 1
+                if flag < 2:
+                    continue
+                if "ortho" in reg_opt:
+                    reg_dict = {"class_name": reg_opt, "config": {"factor": reg_factor, "mode": reg_dim_mode}}
+                elif "l2" in reg_opt:
+                    reg_dict = {"class_name": reg_opt, "config": {"l2": reg_factor}}
+                else:
+                    raise NotImplementedError()
+                layer["config"]["kernel_regularizer"] = reg_dict
+    model_json = json.dumps(model_dict)
+    if custom_objects is None:
+        custom_objects = {}
+    custom_objects += custom_object_scope
+    model_ = tf.keras.models.model_from_json(model_json, custom_objects=custom_objects)
+
+    for layer in model_.layers:
+        layer.set_weights(model.get_layer(layer.name).get_weights())
+
+    return model_
+
+def remove_regularizer_if_one(model, is_masked_func=None, mode="copied", custom_objects=None):
+    
+    if mode is None:
+        return model
+    elif mode == "masked":
+        assert is_masked_func is not None
+
+    model_dict = json.loads(model.to_json())
+    for layer in model_dict["config"]["layers"]:
+        if "Conv2D" in layer["class_name"]:
+            if mode == "all" or (mode == "copied" and "copied" in layer["config"]["name"]) or (mode == "masked" and is_masked_func(layer["config"]["name"])):
+                w = model.get_layer(layer["config"]["name"]).get_weights()[0]
+                flag = 0
+                for x in [int(v) for v in w.shape]:
+                    if x > 1:
+                        flag += 1
+                if flag < 2: # removal condition
+                    layer["config"]["kernel_regularizer"] = None
+    model_json = json.dumps(model_dict)
+    if custom_objects is None:
+        custom_objects = {}
+    custom_objects += custom_object_scope
+    model_ = tf.keras.models.model_from_json(model_json, custom_objects=custom_objects)
+
+    for layer in model_.layers:
+        layer.set_weights(model.get_layer(layer.name).get_weights())
+
+    return model_
+
+
 
 def rewire_copied_body(idx, layers, input_layer, new_input):
 
@@ -748,8 +843,8 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
             max_mask = None
             max_pair = None
             for gidx, mask in enumerate(masks):
-                if len(mask) <= 1:
-                    continue
+                #if len(mask) <= 1:
+                #    continue
 
                 for idx, v in enumerate(mask):
 
@@ -855,6 +950,10 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
                     layer.set_weights(model.get_layer(layer.name).get_weights())
         model = test_model
 
+    if reg_factor > 0.0:
+        is_masked_func = lambda x: is_masked(x, groups, masks, parser.torder)
+        model = add_regularizer(model, is_masked_func=is_masked_func, mode=reg_mode, custom_objects=parser.custom_objects)
+
     if pre_epochs > 0:
         train_func(model, pre_epochs, None)
 
@@ -943,6 +1042,10 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
                     if layer.name not in gates_info: # copied + sharing case
                         gates_info[layer.name] = gmodel.get_layer(l2g_[layer.name]).gates.numpy()
                     gates = gates_info[layer.name]
+
+                    if pruning_masked_only and (not is_masked(layer.name, groups, masks, parser.torder) or "_copied_" in layer.name) and num_masks > 0:
+                        continue
+
                     if np.sum(gates) < min_channels:
                         continue
                     min_val_, min_idx_ = find_min(
@@ -974,6 +1077,9 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
 
         temp_gmodel, temp_parser, _, _ = get_gmodel(dataset, dump_model, model_handler, gates_info)
         ccmodel = temp_parser.cut(temp_gmodel)
+
+        if reg_factor > 0.0:
+            ccmodel = remove_regularizer_if_one(ccmodel, is_masked_func=is_masked_func, mode=reg_mode, custom_objects=parser.custom_objects):
 
         if not os.path.exists(save_path_):
             os.mkdir(save_path_)
@@ -1054,7 +1160,7 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
     model = change_dtype(model, "float32", custom_objects=custom_objects)
     tf.keras.utils.plot_model(model, "omodel.pdf", show_shapes=True)
 
-    global num_masks, pick_ratio, window_size, num_remove, min_channels, droprate, pre_epochs
+    global num_masks, pick_ratio, window_size, num_remove, min_channels, droprate, pre_epochs, pruning_masked_only
     gidx = -1
     idx = -1
     if os.path.exists("config.yaml"):
@@ -1091,6 +1197,8 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
         indices = config["indices"]
         num_iters = config["num_iters"]
 
+        pruning_masked_only = config["pruning_masked_only"]
+
     groups = parse(model, parser, model_type)
 
     subnets = []
@@ -1114,7 +1222,6 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
         tf.keras.utils.plot_model(subnet, "%d.pdf"%i)
         subnets.append(subnet)
 
-    # prototype
     masks = [[] for _ in range(len(groups))]
     for i, g in enumerate(groups):
         for item in g:
@@ -1181,8 +1288,8 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
 
                                 stk = []
                                 for gidx_, mask in enumerate(masks):
-                                    if len(mask) <= 1:
-                                        continue
+                                    #if len(mask) <= 1:
+                                    #    continue
                                     for idx_, v in enumerate(mask):
                                         stk.append([(gidx_, idx_)])
 
@@ -1191,8 +1298,8 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
                                     curr = stk.pop()
                                     if len(curr) < num_masks:
                                         for gidx_, mask in enumerate(masks):
-                                            if len(mask) <= 1:
-                                                continue
+                                            #if len(mask) <= 1:
+                                            #    continue
                                             for idx_, v in enumerate(mask_):
                                                 if (gidx_, idx_) not in curr:
                                                     curr_ = copy.deepcopy(curr)

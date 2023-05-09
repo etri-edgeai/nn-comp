@@ -2,10 +2,16 @@ num_rep: 1
 num_iters: 12
 num_remove: 505
 window_size: 505
-num_masks: 1
+num_masks: 2
 pick_ratio: 1.0
 droprate: 0.25
 pre_epochs: 0
 min_channels: 2
-gidx: 4
-idx: 0
+pruning_masked_only: false
+#indices: [[4,0], [2,0], [4,1], [4,2], [3,0], [0,0], [1,0]]
+indices: [[0, 0], [4, 0]]
+#indices: "greedy"
+reg_factor: 0.0
+reg_opt: "Custom/ortho"
+reg_mode: "masked"
+reg_dim_mode: "rows"
