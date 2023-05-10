@@ -88,7 +88,10 @@ class PatchingAndEmbeddingHandler(LayerHandler):
     def cut_weights(W, in_gate, out_gate):
         ret = []
         for w in W:
-            w_ = cut(copy.deepcopy(w), in_gate, out_gate)
+            if len(w.shape) == 4:
+                w_ = cut(copy.deepcopy(w), in_gate, out_gate)
+            else:
+                w_ = cut(copy.deepcopy(w), None, out_gate)
             ret.append(w_)
         return ret
 
@@ -168,15 +171,25 @@ class MultiHeadAttentionHandler(LayerHandler):
         for idx, w in enumerate(W):
             if len(w.shape) == 3:
                 w_ = copy.deepcopy(w)
-                if idx < 3: # k,q,v
-                    w_[in_gate,:,:]
+                if idx < 6: # k,q,v
+                    w_ = w_[in_gate,:,:]
                 else: # o 
-                    w_[:,:,out_gate]
+                    w_ = w_[:,:,out_gate]
             elif idx == len(W)-1: # last bias
                 w_ = copy.deepcopy(w)
-                w_[out_gate]
+                w_ = w_[out_gate]
+            else:
+                w_ = copy.deepcopy(w)
             ret.append(w_)
         return ret
+
+    @staticmethod
+    def update_layer_schema(layer_dict, new_weights, input_gate, output_gate):
+        print(np.sum(output_gate), output_gate.shape[0], np.sum(input_gate))
+        if np.sum(output_gate) != output_gate.shape[0]:
+            print(np.sum(output_gate), output_gate.shape[0])
+        layer_dict["config"]['output_shape'] = [new_weights[-1].shape[-1],]
+        return
 
 class SeparableConv2DHandler(LayerHandler):
 

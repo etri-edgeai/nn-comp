@@ -988,15 +988,31 @@ def make_group_fisher(model,
 
     tf.keras.utils.plot_model(gmodel, "gmodel.pdf", show_shapes=True)
 
+    last = parser.get_last_transformers()
+
     groups = []
     for g, _ in ordered_groups:
         if is_simple_group(g):
             gate_group = []
+            is_last = False
+            for l in g:
+                if l in last:
+                    is_last = True
+                    break
+            if is_last:
+                continue
             for l in g:
                 gate_group.append(gmodel.get_layer(l2g[l]))
             groups.append(gate_group)
         else:
             g_ = flatten(g)
+            is_last = False
+            for l in g_:
+                if l in last:
+                    is_last = True
+                    break
+            if is_last:
+                continue
             _, group_struct = parser.get_group_topology(g_)
             groups.append(group_struct[0]) # g_ must be a single group
 

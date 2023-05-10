@@ -31,6 +31,7 @@ augment = False
 period = 25
 num_remove = 505
 num_masks = 1
+num_hold = 0
 pick_ratio = 1.0
 window_size = 505
 droprate = 0.25
@@ -122,7 +123,7 @@ def prune_step(X, model, teacher_logits, y, num_iter, groups, l2g, norm, inv_gro
                     for lidx, layer in enumerate(group):
                         flag = False # copyflag
                         for l in g2l[layer.name]:
-                            if "_copied_" in l:
+                            if "_copied_" in l and model.get_layer(l).__class__.__name__ in ["Conv2D", "Dense", "MultiHeadAttention"]:
                                 flag = True
                                 break
                         if not flag:
@@ -160,6 +161,8 @@ def get_gmodel(dataset, model, model_handler, gates_info=None):
         custom_objects=model_handler.get_custom_objects(),
         save_steps=-1)
 
+    last_ = parser.get_last_transformers()
+
     for layer in gmodel.layers:
         if layer.__class__ == SimplePruningGate:
             layer.trainable = False
@@ -167,14 +170,18 @@ def get_gmodel(dataset, model, model_handler, gates_info=None):
 
     if gates_info is not None and len(gates_info) > 0:
         for layer in gmodel.layers:
-            if layer.__class__.__name__ == "Conv2D" and layer.name in parser.torder:
+            if layer.__class__.__name__ in ["Conv2D", "Dense", "MultiHeadAttention"] and layer.name in parser.torder:
                 
                 if layer.name in gates_info:
                     #print(layer.name, np.sum(gates_info[layer.name]))
                     gates = gates_info[layer.name]
                 elif "copied" in layer.name:
                     oname = cname2name(layer.name)
+                    if oname in last_:
+                        continue # might be the last transformers
                     gates = gates_info[oname]
+                if layer.name in last_:
+                    continue
                 gmodel.get_layer(pc.l2g[layer.name]).gates.assign(gates)
 
     return gmodel, parser, ordered_groups, pc
@@ -190,7 +197,7 @@ def prune(dataset, model, model_handler, target_ratio=0.5, continue_info=None, g
     if continue_info is None:
             
         gmodel, parser, ordered_groups, pc = get_gmodel(dataset, model, model_handler, gates_info=gates_info)
-
+        tf.keras.utils.plot_model(gmodel, "gmodel_vit.pdf")
         continue_info = (gmodel, pc.l2g, pc.inv_groups, ordered_groups, parser, pc)
     else:
         gmodel, l2g, inv_groups, ordered_groups, parser, pc = continue_info
@@ -356,8 +363,6 @@ def remove_regularizer_if_one(model, is_masked_func=None, mode="copied", custom_
 
     return model_
 
-
-
 def rewire_copied_body(idx, layers, input_layer, new_input):
 
     map_ = {} # name change
@@ -374,15 +379,27 @@ def rewire_copied_body(idx, layers, input_layer, new_input):
         inbound = layer["inbound_nodes"]
         if layer["config"]["name"] != str(idx)+"_copied_"+input_layer:
             for flow in inbound:
-                for ib in flow:
-                    assert type(ib[0]) == str
-                    ib[0] = str(idx)+"_copied_"+ib[0]
+                if type(flow[0]) == str:
+                    flow[0] = str(idx)+"_copied_"+flow[0]
+                else:
+                    for ib in flow:
+                        assert type(ib[0]) == str
+                        if "value" in ib[-1]:
+                            assert ib[0] == ib[-1]["value"][0]
+                        ib[0] = str(idx)+"_copied_"+ib[0]
+                        if "value" in ib[-1]:
+                            ib[-1]["value"][0] = ib[0]
         else:
             if new_input is not None:
                 for flow in inbound:
                     for ib in flow:
                         assert type(ib[0]) == str
+                        if "value" in ib[-1]:
+                            assert ib[0] == ib[-1]["value"][0]
                         ib[0] = new_input
+                        if "value" in ib[-1]:
+                            ib[-1]["value"][0] = ib[0]
+
 
 def extract_body(idx, next_group, parser, olayer_dict, new_input=None):
 
@@ -418,7 +435,7 @@ def extract_body(idx, next_group, parser, olayer_dict, new_input=None):
                 if found:
                     input_layer = layer
 
-            if olayer_dict[layer]["class_name"] == "Conv2D": # Transform
+            if olayer_dict[layer]["class_name"] in ["Conv2D", "Dense", "MultiHeadAttention"]: # Transform
                 holder = layer
                 break
 
@@ -489,6 +506,28 @@ def select_submodel(
                 if submask[iidx] == 1:
                     continue
 
+                """
+                # non-linearity check
+                nonlinear = False
+                left = groups[gidx][iidx][2][0][1]
+                right = groups[gidx][iidx][2][1][1]
+                if left > right:
+                    temp = right
+                    right = left
+                    left = temp
+
+                if iidx < 8:
+                    continue
+
+                for layer in basemodel.layers:
+                    if left <= parser.torder[layer.name] and parser.torder[layer.name] <= right:
+                        if "Dense" == layer.__class__.__name__:
+                            nonlinear = True
+
+                if nonlinear:
+                    continue
+                """
+
                 submask[iidx] = 1
                 model_ = remove_skip_edge(basemodel, curr_model, parser, groups, remove_masks)
                 submask[iidx] = 0
@@ -499,13 +538,19 @@ def select_submodel(
                     if len(layer.get_weights()) > 0:
                         if "copied" in layer.name:
                             w = curr_model.get_layer(cname2name(layer.name)).get_weights()
-                            w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
+                            if layer.__class__.__name__ == "Conv2D":
+                                w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
                             if len(layer.get_weights()) == len(w):
                                 layer.set_weights(w)
                             else:
                                 layer.set_weights([w[0]])
                         else:
                             layer.set_weights(curr_model.get_layer(layer.name).get_weights())
+
+                print("+++++++ %d -> %d +++++++" % (idx, iidx))
+                model_handler.compile(model_, run_eagerly=False)
+                (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=1000)
+                value = model_.evaluate(test_data_gen, verbose=1)[1]
 
                 gmodel_ = get_gmodel(dataset, model_, model_handler, gates_info=gates_info)[0]
                 sum_ = 0
@@ -532,14 +577,19 @@ def create_submodel(gidx, idx, mask, submask, groups, first_masked_idx, num_flow
 
     group = groups[gidx]
     add_name = group[idx][0]
-    inputs = get_add_inputs(group, idx, olayer_dict, parser)
+    #inputs = get_add_inputs(group, idx, olayer_dict, parser)
+    inputs = [group[idx][2][0][0], group[idx][2][1][0]]
+
     target_dicts = [layer_dict[conn] for conn in conn_to[add_name]]
 
     _removed_layers = []
     added_layers = []
 
+    new_model_output = None
+
     if first_masked_idx is not None:
-        leftmost_inputs = get_add_inputs(group, first_masked_idx, olayer_dict, parser)
+        #leftmost_inputs = get_add_inputs(group, first_masked_idx, olayer_dict, parser)
+        leftmost_inputs = [group[first_masked_idx][2][0][0], group[first_masked_idx][2][1][0]]
     else:
         leftmost_inputs = inputs
 
@@ -552,15 +602,19 @@ def create_submodel(gidx, idx, mask, submask, groups, first_masked_idx, num_flow
     for target_dict in target_dicts:
         replace_input(target_dict, add_name, leftmost_inputs[0]) # inputs[0] is the output from the previous module.
 
-    act_dict = None
+    act_dict_template = {
+        'class_name': 'Activation',
+        'config': {
+            'name': 'name', 'trainable': True, 'dtype': 'float32', 'activation': 'swish'},
+        'name': 'name',
+        'inbound_nodes': []
+    }
+
+    act_dict = act_dict_template
     for key in layer_dict:
-        if layer_dict[key]["class_name"] == "Activation":
+        if layer_dict[key]["class_name"] == "ReLU": # if the model uses ReLU, then  act_dict is ReLU.
             act_dict = copy.deepcopy(layer_dict[key])
             break
-        elif layer_dict[key]["class_name"] == "ReLU":
-            act_dict = copy.deepcopy(layer_dict[key])
-            break
-    assert act_dict is not None
 
     for iidx, v in enumerate(submask):
 
@@ -592,11 +646,15 @@ def create_submodel(gidx, idx, mask, submask, groups, first_masked_idx, num_flow
             holder_follower = None # the follower of the holder in olayer_dict
             for j in range(parser.torder[holder]+1, len(olayer_dict)):
                 for flow in olayer_dict[tidx[j]]["inbound_nodes"]:
-                    for ib in flow:
-                        if ib[0] == holder:
+                    if type(flow[0]) == str:
+                        if flow[0] == holder:
                             holder_follower = tidx[j]
                             break
-            assert holder_follower is not None
+                    else:
+                        for ib in flow:
+                            if ib[0] == holder:
+                                holder_follower = tidx[j]
+                                break
 
             # last condition is for select_submodel for multiple zero mask situation.
             if num_flow[iidx-1] > 0 and mask[iidx-1][iidx-1] == 0 and np.sum(mask[iidx-1]) > 0:
@@ -616,12 +674,18 @@ def create_submodel(gidx, idx, mask, submask, groups, first_masked_idx, num_flow
                         [holder, 0, 0, {}]
                     ]
                     layer_dict[target_add_name]["inbound_nodes"] = [flow]
-                        
-                    for flow in layer_dict[holder_follower]["inbound_nodes"]:
-                        for ib in flow:
-                            if ib[0] == holder:
-                                ib[0] = target_add_name
 
+                    if holder_follower is not None:
+                        for flow in layer_dict[holder_follower]["inbound_nodes"]:
+                            if type(flow[0]) == str:
+                                if flow[0] == holder:
+                                    flow[0] = target_add_name
+                            else:
+                                for ib in flow:
+                                    if ib[0] == holder:
+                                        ib[0] = target_add_name
+                    else:   # holder_follower is None -> last layer
+                        new_model_output = target_add_name
                 else:
 
                     inject_input(layer_dict[target_add_name], output_name)
@@ -644,10 +708,17 @@ def create_submodel(gidx, idx, mask, submask, groups, first_masked_idx, num_flow
                     ]
                     new_layer["inbound_nodes"] = [flow]
 
-                    for flow in layer_dict[holder_follower]["inbound_nodes"]:
-                        for ib in flow:
-                            if ib[0] == holder:
-                                ib[0] = new_layer["name"]
+                    if holder_follower is not None:
+                        for flow in layer_dict[holder_follower]["inbound_nodes"]:
+                            if type(flow[0]) == str:
+                                if flow[0] == holder:
+                                    flow[0] = new_layer["name"]
+                            else:
+                                for ib in flow:
+                                    if ib[0] == holder:
+                                        ib[0] = new_layer["name"]
+                    else: # holder_follwer is None -> last layer
+                        new_model_output = new_layer["name"]
 
                     added_layers.extend([new_layer])
 
@@ -657,7 +728,7 @@ def create_submodel(gidx, idx, mask, submask, groups, first_masked_idx, num_flow
             else:
                 raise ValueError()
                                        
-    return added_layers, _removed_layers, new_add
+    return added_layers, _removed_layers, new_add, new_model_output
 
 def remove_skip_edge(basemodel, curr_model, parser, groups, remove_masks, weight_copy=False):
 
@@ -709,7 +780,7 @@ def remove_skip_edge(basemodel, curr_model, parser, groups, remove_masks, weight
                 for layer in model_dict["config"]["layers"]:
                     layer_dict[layer["name"]] = layer
 
-                _added_layers, _removed_layers, new_add = create_submodel(
+                _added_layers, _removed_layers, new_add, new_model_output = create_submodel(
                     gidx, idx, mask, submask, groups, first_masked_idx, num_flow, olayer_dict, layer_dict, parser, conn_to, tidx, new_add=new_add)
 
                 for r in _removed_layers:
@@ -717,16 +788,22 @@ def remove_skip_edge(basemodel, curr_model, parser, groups, remove_masks, weight
                         model_dict["config"]["layers"].remove(layer_dict[r])
                 model_dict["config"]["layers"].extend(_added_layers)
 
+                if new_model_output is not None: # for vit
+                    model_dict["config"]["output_layers"][0][0] = new_model_output
+
     #print(model_dict)
     model_json = json.dumps(model_dict)
     cmodel = tf.keras.models.model_from_json(model_json, custom_objects=parser.custom_objects)
+
+    tf.keras.utils.plot_model(cmodel, "cmodel.pdf", show_shapes=True)
 
     if weight_copy:
         for layer in cmodel.layers:
             try:
                 if "copied_" in layer.name:
                     w = curr_model.get_layer(cname2name(layer.name)).get_weights()
-                    w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
+                    if layer.__class__.__name__ == "Conv2D":
+                        w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
                     if len(layer.get_weights()) == len(w):
                         layer.set_weights(w)
                     else:
@@ -879,7 +956,8 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
                         if len(layer.get_weights()) > 0:
                             if "copied" in layer.name:
                                 w = model.get_layer(cname2name(layer.name)).get_weights()
-                                w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
+                                if layer.__class__.__name__ == "Conv2D":
+                                    w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
                                 if len(layer.get_weights()) == len(w):
                                     layer.set_weights(w)
                                 else:
@@ -941,14 +1019,22 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
             if len(layer.get_weights()) > 0:
                 if "copied" in layer.name:
                     w = model.get_layer(cname2name(layer.name)).get_weights()
-                    w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
+                    if layer.__class__.__name__ == "Conv2D":
+                        w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
                     if len(layer.get_weights()) == len(w):
                         layer.set_weights(w)
                     else:
                         layer.set_weights([w[0]])
                 else:
                     layer.set_weights(model.get_layer(layer.name).get_weights())
+
         model = test_model
+
+    """
+    model_handler.compile(model, run_eagerly=False)
+    (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=1000)
+    value = model.evaluate(test_data_gen, verbose=1)[1]
+    """
 
     if reg_factor > 0.0:
         is_masked_func = lambda x: is_masked(x, groups, masks, parser.torder)
@@ -963,8 +1049,6 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
     l2g = None
     inv_groups = None
     recon_mode = True
-    idx2rgroups = {}
-    headers = {}
     masked = []
     split_flag = {}
     for it in range(num_iters):
@@ -972,6 +1056,8 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
         # conduct pruning
         (cscore, grads, raw_grads), continue_info, temp_output = prune(dataset, model, model_handler, target_ratio=0.5, continue_info=continue_info, gates_info=gates_info, dump=False)
         gmodel, l2g_, inv_groups_, sharing_groups_, parser_, pc_ = continue_info # sharing groups (different from `groups`)
+
+        last_ = parser_.get_last_transformers()
 
         # one-time update
         if l2g is None:
@@ -993,22 +1079,11 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
         # init
         if len(gates_info) == 0:
             for lidx, layer in enumerate(model.layers):
-                if layer.__class__.__name__ == "Conv2D":
+                if layer.__class__.__name__ in ["Conv2D", "Dense", "MultiHeadAttention"]:
+                    if layer.name in last_: # last transformer
+                        continue
                     gates = gmodel.get_layer(l2g[layer.name]).gates.numpy()
                     gates_info[layer.name] = gates
-
-            for lidx, layer in enumerate(model.layers):
-                if layer.__class__.__name__ == "Conv2D":
-                    gidx = name2gidx(layer.name, l2g, inv_groups) # gidx on the original model
-                    if len(sharing_groups[gidx][0]) > 1:
-                        rindex = find_residual_group(sharing_groups[gidx][0], layer.name, parser, groups, model_backup)
-                        if rindex is not None:
-                            if rindex[1] == 0 and parser.torder[layer.name] < groups[rindex[0]][0][2][1][1]: # header finding
-                                headers[rindex[0]] = layer.name
-                            else:
-                                if rindex not in idx2rgroups:
-                                    idx2rgroups[rindex] = []
-                                idx2rgroups[rindex].append(layer.name)
 
         total_ = 0
         remaining = 0
@@ -1031,13 +1106,15 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
             min_idx = (-1, -1)
             for lidx, layer in enumerate(model.layers):
            
-                if layer.__class__.__name__ == "Conv2D":
+                if layer.__class__.__name__ in ["Conv2D", "Dense", "MultiHeadAttention"]:
+                    if layer.name in last_:
+                        continue
                     gidx_ = name2gidx(layer.name, l2g_, inv_groups_) # gidx on current model
                     residual_removal[layer.name] = None
                     if len(sharing_groups_[gidx_][0]) > 1:
                         score = cscore[gidx_] # copied + sharing + non-residual-conv
                     else:
-                        score = grads[layer.name].numpy()
+                        score = grads[layer.name].numpy() # TODO:check
 
                     if layer.name not in gates_info: # copied + sharing case
                         gates_info[layer.name] = gmodel.get_layer(l2g_[layer.name]).gates.numpy()
@@ -1048,6 +1125,7 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
 
                     if np.sum(gates) < min_channels:
                         continue
+
                     min_val_, min_idx_ = find_min(
                         score,
                         gates,
@@ -1062,11 +1140,10 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
 
             if min_val != -1:
                 layer_name = model.layers[min_idx[0]].name
-                rindex = residual_removal[layer_name]
                 gidx_ = name2gidx(layer_name, l2g_, inv_groups_)
                 for name in sharing_groups_[gidx_][0]:
-                    if model.get_layer(name).__class__.__name__ == "Conv2D":
-                        if name not in gates_info:
+                    if model.get_layer(name).__class__.__name__ in ["Conv2D", "Dense", "MultiHeadAttention"]:
+                        if name in last_:
                             continue
                         gates = gates_info[name]
                         gates[min_idx[1]] = 0.0
@@ -1099,7 +1176,7 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
             drlayers = []
             drpositions = []
             for layer in ccmodel.layers:
-                if "_copied_" in layer.name and layer.__class__.__name__ == "Conv2D":
+                if "_copied_" in layer.name and layer.__class__.__name__ in ["Conv2D", "Dense", "MultiHeadAttention"]:
                     dr = DropPath(droprate)
                     drdict = {
                         "name":layer.name+"_dr",
@@ -1120,18 +1197,35 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
 
 def parse(model, parser, model_type="efnet"):
 
-    max_len = 4
+    max_len = 1000
     model_dict = json.loads(model.to_json())
     groups = []
     group = None
+    lefts = []
+    last_add = None
     for layer in model_dict["config"]["layers"]:
         if layer["class_name"] == "Add":
+            last_add = layer["name"]
             left = None
             right = None
+            pass_ = False
             for ib in layer["inbound_nodes"]:
                 left = model.get_layer(ib[0][0])
                 right = model.get_layer(ib[1][0])
 
+                if parser.torder[left.name] > parser.torder[right.name]:
+                    temp = left
+                    left = right
+                    right = temp
+
+                lefts.append(left)
+                if len(lefts) > num_hold:
+                    left = lefts[-1*num_hold-1]
+                    lefts = []
+                else:
+                    pass_ = True
+                    break
+                
                 if (left.__class__.__name__ == "BatchNormalization" and right.__class__.__name__ == "Activation"): # Resnet
                     if group is None or len(group) > max_len:
                         group = []
@@ -1143,16 +1237,21 @@ def parse(model, parser, model_type="efnet"):
                 elif (left.__class__.__name__ == "BatchNormalization" and right.__class__.__name__ == "BatchNormalization" and "resnet" in model_type): # Resnet
                     if group is not None:
                         group = None
-                elif (left.__class__.__name__ != "Add" and right.__class__.__name__ != "Add") or len(group) > max_len: # start group
-                    group = [] # assign new group
-                    groups.append(group)
+                elif (left.__class__.__name__ != "Add" and right.__class__.__name__ != "Add"): # start group
+                    if group is None or len(group) > max_len:
+                        group = [] # assign new group
+                        groups.append(group)
 
                 pair = [(left.name, parser.torder[left.name]), (right.name, parser.torder[right.name])]
 
                 assert len(ib) == 2
             assert len(layer["inbound_nodes"]) == 1
-            if group is not None:
+            if group is not None and not pass_:
                 group.append((layer["name"], parser.torder[layer["name"]], pair))
+
+    if last_add != group[-1][0]:
+        group.append((last_add, parser.torder[last_add], pair))
+
     return groups
 
 def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_type="efnet", dataset="imagenet2012", custom_objects=None):
@@ -1160,7 +1259,7 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
     model = change_dtype(model, "float32", custom_objects=custom_objects)
     tf.keras.utils.plot_model(model, "omodel.pdf", show_shapes=True)
 
-    global num_masks, pick_ratio, window_size, num_remove, min_channels, droprate, pre_epochs, pruning_masked_only
+    global num_masks, pick_ratio, window_size, num_remove, min_channels, droprate, pre_epochs, pruning_masked_only, num_hold
     gidx = -1
     idx = -1
     if os.path.exists("config.yaml"):
@@ -1178,6 +1277,8 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
         pick_ratio_ = config["pick_ratio"]
         if type(pick_ratio_) != list:
             pick_ratio_ = [pick_ratio_]
+
+        num_hold = config["num_hold"]
 
         window_size = config["window_size"]
         num_remove = config["num_remove"]
@@ -1221,6 +1322,9 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
         subnet = change_dtype(subnet, "float32", custom_objects=custom_objects)
         tf.keras.utils.plot_model(subnet, "%d.pdf"%i)
         subnets.append(subnet)
+
+    groups = new_groups
+    print(groups)
 
     masks = [[] for _ in range(len(groups))]
     for i, g in enumerate(groups):
