@@ -55,6 +55,7 @@ reg_opt = "Custom/ortho"
 reg_mode = "masked"
 reg_dim_mode = "rows"
 save_path = "saved_grad_%d" % (window_size)
+dropblock = False
 config_path = None
 custom_object_scope = {
     "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer, "HvdMovingAverage":optimizer_factory.HvdMovingAverage, "Custom/ortho":reg_.OrthoRegularizer
@@ -960,6 +961,55 @@ def find_residual_group(sharing_group, layer_name, parser_, groups, model):
     else:
         return None
 
+def remove_group(model, parser, groups, masks):
+
+    model_dict = json.loads(model.to_json())
+    layer_dict = {}
+    for layer in model_dict["config"]["layers"]:
+        layer_dict[layer["name"]] = layer
+
+    for group, mask in zip(groups, masks):
+
+        for idx, (g, m) in enumerate(zip(group, mask)):
+            if m == 0:
+                left = g[2][0][1]
+                left_ = g[2][0][0]
+                right = g[2][1][1]
+                right_ = g[2][1][0]
+                if left > right:
+                    temp = right
+                    right = left
+                    left = temp
+
+                removed_layers = [
+                    layer_dict[layer.name] for layer in model.layers if left < parser.torder[layer.name] and\
+                        parser.torder[layer.name] <= right
+                ]
+                add_name = g[0]
+                removed_layers.append(layer_dict[add_name])
+
+                alter = g[2][0][0]
+                for layer in model_dict["config"]["layers"]:
+                    for flow in layer["inbound_nodes"]:
+                        if type(flow[0]) == str:
+                            if flow[0] == add_name:
+                                flow[0] = alter
+                        else:
+                            for ib in flow:
+                                if ib[0] == add_name:
+                                    ib[0] = alter
+
+                                if "value" in ib[-1]:
+                                    ib[-1]["value"][0] = ib[0]
+    
+    for layer in removed_layers:
+        model_dict["config"]["layers"].remove(layer)
+
+    model_json = json.dumps(model_dict)
+    custom_objects = parser.custom_objects
+    custom_objects.update(custom_object_scope)
+    model_ = tf.keras.models.model_from_json(model_json, custom_objects=custom_objects)
+    return model_
 
 def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func, num_iters=100, gmode=False, dataset="imagenet2012", sub_path=None, masking=None, custom_objects=None):
 
@@ -1018,8 +1068,6 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
             max_mask = None
             max_pair = None
             for gidx, mask in enumerate(masks):
-                #if len(mask) <= 1:
-                #    continue
 
                 for idx, v in enumerate(mask):
 
@@ -1092,28 +1140,35 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
     else:
         masks, masksnn = masking
 
-        # complete masksnn
-        for gidx, mask in enumerate(masks):
-            for idx, v in enumerate(mask):
-                if mask[idx] == 0:
-                    if np.sum(masksnn[gidx][idx]) == 0:
-                        select_submodel(
-                            model_backup,
-                            model,
-                            model_handler,
-                            dataset,
-                            gates_info,
-                            gidx,
-                            idx,
-                            masksnn,
-                            groups,
-                            parser,
-                            data_holder)
+        if dropblock:
+            pass
+        else:
+            # complete masksnn
+            for gidx, mask in enumerate(masks):
+                for idx, v in enumerate(mask):
+                    if mask[idx] == 0:
+                        if np.sum(masksnn[gidx][idx]) == 0:
+                            select_submodel(
+                                model_backup,
+                                model,
+                                model_handler,
+                                dataset,
+                                gates_info,
+                                gidx,
+                                idx,
+                                masksnn,
+                                groups,
+                                parser,
+                                data_holder)
 
         mask_history.add(None) # dummy: do nothing
 
     if len(mask_history) > 0:
-        test_model = remove_skip_edge(model_backup, model, parser, groups, masksnn)
+        if dropblock:
+            test_model = remove_group(model, parser, groups, masks)
+            tf.keras.utils.plot_model(test_model, "dropblock.pdf")
+        else:
+            test_model = remove_skip_edge(model_backup, model, parser, groups, masksnn)
         for layer in test_model.layers:
             if len(layer.get_weights()) > 0:
                 if "copied" in layer.name:
@@ -1356,7 +1411,7 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
     model = change_dtype(model, "float32", custom_objects=custom_objects)
     tf.keras.utils.plot_model(model, "omodel.pdf", show_shapes=True)
 
-    global num_masks, pick_ratio, window_size, num_remove, min_channels, droprate, pre_epochs, pruning_masked_only, num_hold, config_path
+    global num_masks, pick_ratio, window_size, num_remove, min_channels, droprate, pre_epochs, pruning_masked_only, num_hold, config_path, dropblock
     gidx = -1
     idx = -1
     if os.path.exists("config.yaml"):
@@ -1367,6 +1422,8 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
                 print(exc)
 
         config_path = config["config_path"]
+
+        dropblock = config["dropblock"]
 
         num_rep = config["num_rep"]
         num_masks_ = config["num_masks"]
