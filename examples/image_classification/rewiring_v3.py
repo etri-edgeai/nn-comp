@@ -1202,6 +1202,14 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
         #train_func(model, pre_epochs, None)
         pretrain(model, pre_epochs, model_handler)
 
+        model_handler.compile(model, run_eagerly=False)
+        if dataset == "imagenet2012":
+            n_classes = 1000
+        else:
+            n_classes = 100
+        (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
+        model.evaluate(test_data_gen, verbose=1)[1]
+
     gates_info = {}
     removed_layers = set()
     recon_mode = True
