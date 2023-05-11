@@ -111,6 +111,11 @@ def load_dataset(dataset, model_handler, sampling_ratio=1.0, training_augment=Tr
             num_train_examples = 3680
             num_val_examples = 3669
 
+        if sampling_ratio != 1.0:
+            sampling_count = (int(num_train_examples * sampling_ratio), int(num_val_examples * sampling_ratio))
+        else:
+            sampling_count = (None, None)
+
         iters = num_train_examples // (batch_size * hvd.size())
         iters_val = num_val_examples // (batch_size * hvd.size())
         test_data_generator = valid_data_generator
@@ -124,18 +129,19 @@ def load_dataset(dataset, model_handler, sampling_ratio=1.0, training_augment=Tr
 
 
 
-def train(dataset, model, model_name, model_handler, run_eagerly=False, callbacks=None, is_training=True, augment=True, exclude_val=False, save_dir=None, n_classes=100, conf=None, epochs_=None):
+def train(dataset, model, model_name, model_handler, run_eagerly=False, callbacks=None, is_training=True, augment=True, exclude_val=False, save_dir=None, n_classes=100, conf=None, epochs_=None, sampling_ratio=1.0):
 
     import horovod.tensorflow.keras as hvd_
 
     batch_size = model_handler.get_batch_size(dataset)
 
     if type(dataset) == str:
-        data_gen, iters_info = load_dataset(dataset, model_handler, sampling_ratio=1.0, training_augment=augment, n_classes=n_classes)
+        data_gen, iters_info = load_dataset(dataset, model_handler, sampling_ratio=sampling_ratio, training_augment=augment, n_classes=n_classes)
     else:
         data_gen, iters_info = dataset
     train_data_generator, valid_data_generator, test_data_generator = data_gen
     iters, iters_val = iters_info
+    iters = int(iters * sampling_ratio)
 
     if epochs_ is None:
         if is_training and hasattr(model_handler, "get_train_epochs"):

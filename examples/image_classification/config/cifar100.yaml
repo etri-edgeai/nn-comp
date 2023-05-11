@@ -25,3 +25,5 @@ grad_accum_steps: 1
 hvd_fp16_compression: false
 intratrain_eval_using_ema: true
 label_smoothing: 0.1 
+cutmix_alpha: 0.0
+mixup_alpha: 0.0

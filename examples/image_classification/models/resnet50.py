@@ -11,7 +11,7 @@ import cv2
 height = 224
 width = 224
 input_shape = (height, width, 3) # network input
-batch_size = 32
+batch_size = 16
 
 def get_shape(dataset):
     return (height, width, 3) # network input

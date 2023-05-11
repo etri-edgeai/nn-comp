@@ -11,17 +11,29 @@ from numba import njit
 from numpy import dot
 from numpy.linalg import norm
 
+import horovod.tensorflow.keras as hvd
+import horovod
+hvd.init()
+
+from silence_tensorflow import silence_tensorflow
+silence_tensorflow()
+
 from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser, NNParser, serialize
 from nncompress.backend.tensorflow_ import SimplePruningGate, DifferentiableGate
+from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser, StopGradientLayer, has_intersection
 from nncompress import backend as M
 from group_fisher import make_group_fisher, add_gates, compute_positions, flatten
 
+import random
+
 from prep import add_augmentation, change_dtype
 
-from train import iteration_based_train, train_step, load_dataset
+from train import iteration_based_train, train_step, load_dataset, train
 from rewiring import decode, get_add_inputs, replace_input
+from loader import get_model_handler
 
 import reg as reg_
+from utils import optimizer_factory
 
 max_iters = 25
 lr_mode = 0
@@ -43,8 +55,84 @@ reg_opt = "Custom/ortho"
 reg_mode = "masked"
 reg_dim_mode = "rows"
 save_path = "saved_grad_%d" % (window_size)
-custom_object_scope = {"Custom/ortho": reg_.OrthoRegularizer}
+config_path = None
+custom_object_scope = {
+    "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer, "HvdMovingAverage":optimizer_factory.HvdMovingAverage, "Custom/ortho":reg_.OrthoRegularizer
+}
 
+
+def pretrain_(model_path, model_name, config_path_, epochs=1, lr=0.1): 
+
+    custom_objects = {
+        "SimplePruningGate":SimplePruningGate,
+        "StopGradientLayer":StopGradientLayer,
+        "HvdMovingAverage":optimizer_factory.HvdMovingAverage
+    }
+
+    silence_tensorflow()
+    num_gpus = len(tf.config.list_physical_devices('GPU'))
+    
+    os.environ['CUDA_VISIBLE_DEVICES'] = ",".join([str(c) for c in list(range(1,num_gpus+1))])
+    hvd.init()
+    physical_devices = tf.config.list_physical_devices('GPU')
+    if len(physical_devices) > 0:
+        for i, p in enumerate(physical_devices):
+            tf.config.experimental.set_memory_growth(
+                physical_devices[i], True
+                )
+        tf.config.set_visible_devices(physical_devices[hvd.local_rank()+1], 'GPU')
+    tf.random.set_seed(2)
+    random.seed(1234)
+    np.random.seed(1234)
+    model_handler = get_model_handler(model_name)
+
+    dirname = os.path.dirname(model_path)
+
+    with open(config_path_, 'r') as stream:
+        try:
+            config = yaml.safe_load(stream)
+        except yaml.YAMLError as exc:
+            print(exc)
+            sys.exit(1)
+
+    batch_size = model_handler.get_batch_size(config["dataset"])
+    model = tf.keras.models.load_model(model_path, custom_objects)
+
+    if config["use_amp"]:
+        tf.keras.backend.set_floatx("float16")
+        from tensorflow.keras import mixed_precision
+        mixed_precision.set_global_policy('mixed_float16')
+        model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_object_scope)
+
+    model = add_augmentation(model, model_handler.width, train_batch_size=batch_size, do_mixup=config["mixup_alpha"] > 0, do_cutmix=config["cutmix_alpha"] > 0, custom_objects=custom_objects, update_batch_size=True)
+
+    tf.keras.backend.set_floatx("float64")
+    model = change_dtype(model, "float64", custom_objects=custom_object_scope)
+
+    config["mode"] = "finetune"
+    train(config["dataset"], model, model_handler.get_name()+"ooo", model_handler, n_classes=config["num_classes"], save_dir=None, conf=config, epochs_=epochs, sampling_ratio=config["sampling_ratio"])
+
+    if hvd.size() > 1 and hvd.local_rank() == 0:
+        tf.keras.models.save_model(model, dirname+"/finetuned_studentignore.h5")
+
+def pretrain(model, epochs, model_handler):
+
+    model_handler.compile(model, run_eagerly=False)
+
+    #with tempfile.TemporaryDirectory() as dirpath:
+    dirpath = "test"
+    tf.keras.models.save_model(model, os.path.join(dirpath, "model.h5"))
+
+    horovod.run(pretrain_, (os.path.join(dirpath, 'model.h5'), model_handler.get_name(), config_path, epochs), np=len(tf.config.list_physical_devices('GPU'))-1, use_mpi=True)
+
+    if not os.path.exists(os.path.join(dirpath, f"finetuned_studentignore.h5")):
+        raise Exception("err")
+    else:
+        # load and transfer model.
+        ret_model = tf.keras.models.load_model(os.path.join(dirpath, f"finetuned_studentignore.h5"), custom_objects=custom_object_scope)
+        for layer in model.layers:
+            if len(layer.get_weights()) > 0:
+                layer.set_weights(ret_model.get_layer(layer.name).get_weights())
 
 @njit
 def find_min(cscore, gates, min_val, min_idx, lidx, ncol):
@@ -184,7 +272,13 @@ def get_gmodel(dataset, model, model_handler, gates_info=None):
                     continue
                 gmodel.get_layer(pc.l2g[layer.name]).gates.assign(gates)
 
-    return gmodel, parser, ordered_groups, pc
+    ordered_groups_ = []
+    for g in ordered_groups:
+        if g[0][0] in last_:
+            continue
+        ordered_groups_.append(g)
+
+    return gmodel, parser, ordered_groups_, pc
    
 
 def prune(dataset, model, model_handler, target_ratio=0.5, continue_info=None, gates_info=None, dump=False):
@@ -195,7 +289,6 @@ def prune(dataset, model, model_handler, target_ratio=0.5, continue_info=None, g
         n_classes = 100
 
     if continue_info is None:
-            
         gmodel, parser, ordered_groups, pc = get_gmodel(dataset, model, model_handler, gates_info=gates_info)
         tf.keras.utils.plot_model(gmodel, "gmodel_vit.pdf")
         continue_info = (gmodel, pc.l2g, pc.inv_groups, ordered_groups, parser, pc)
@@ -549,7 +642,12 @@ def select_submodel(
 
                 print("+++++++ %d -> %d +++++++" % (idx, iidx))
                 model_handler.compile(model_, run_eagerly=False)
-                (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=1000)
+                if dataset == "imagenet2012":
+                    n_classes = 1000
+                else:
+                    n_classes = 100
+
+                (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
                 value = model_.evaluate(test_data_gen, verbose=1)[1]
 
                 gmodel_ = get_gmodel(dataset, model_, model_handler, gates_info=gates_info)[0]
@@ -998,18 +1096,19 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
         for gidx, mask in enumerate(masks):
             for idx, v in enumerate(mask):
                 if mask[idx] == 0:
-                    select_submodel(
-                        model_backup,
-                        model,
-                        model_handler,
-                        dataset,
-                        gates_info,
-                        gidx,
-                        idx,
-                        masksnn,
-                        groups,
-                        parser,
-                        data_holder)
+                    if np.sum(masksnn[gidx][idx]) == 0:
+                        select_submodel(
+                            model_backup,
+                            model,
+                            model_handler,
+                            dataset,
+                            gates_info,
+                            gidx,
+                            idx,
+                            masksnn,
+                            groups,
+                            parser,
+                            data_holder)
 
         mask_history.add(None) # dummy: do nothing
 
@@ -1032,7 +1131,11 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
 
     """
     model_handler.compile(model, run_eagerly=False)
-    (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=1000)
+    if dataset == "imagenet2012":
+        n_classes = 1000
+    else:
+        n_classes = 100
+    (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
     value = model.evaluate(test_data_gen, verbose=1)[1]
     """
 
@@ -1041,13 +1144,11 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
         model = add_regularizer(model, is_masked_func=is_masked_func, mode=reg_mode, custom_objects=parser.custom_objects)
 
     if pre_epochs > 0:
-        train_func(model, pre_epochs, None)
+        #train_func(model, pre_epochs, None)
+        pretrain(model, pre_epochs, model_handler)
 
     gates_info = {}
     removed_layers = set()
-    sharing_groups = None
-    l2g = None
-    inv_groups = None
     recon_mode = True
     masked = []
     split_flag = {}
@@ -1057,15 +1158,9 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
         (cscore, grads, raw_grads), continue_info, temp_output = prune(dataset, model, model_handler, target_ratio=0.5, continue_info=continue_info, gates_info=gates_info, dump=False)
         gmodel, l2g_, inv_groups_, sharing_groups_, parser_, pc_ = continue_info # sharing groups (different from `groups`)
 
-        last_ = parser_.get_last_transformers()
+        tf.keras.utils.plot_model(gmodel, "ggggmodel.pdf")
 
-        # one-time update
-        if l2g is None:
-            l2g = l2g_
-        if inv_groups is None:
-            inv_groups = inv_groups_
-        if sharing_groups is None:
-            sharing_groups = sharing_groups_
+        last_ = parser_.get_last_transformers()
 
         exists = set()
         for layer in model.layers:
@@ -1082,7 +1177,7 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
                 if layer.__class__.__name__ in ["Conv2D", "Dense", "MultiHeadAttention"]:
                     if layer.name in last_: # last transformer
                         continue
-                    gates = gmodel.get_layer(l2g[layer.name]).gates.numpy()
+                    gates = gmodel.get_layer(l2g_[layer.name]).gates.numpy()
                     gates_info[layer.name] = gates
 
         total_ = 0
@@ -1100,7 +1195,6 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
         print("RECON MODE: ", recon_mode)
 
         count = {}
-        residual_removal = {}
         for __ in range(window_size):
             min_val = -1
             min_idx = (-1, -1)
@@ -1109,8 +1203,8 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
                 if layer.__class__.__name__ in ["Conv2D", "Dense", "MultiHeadAttention"]:
                     if layer.name in last_:
                         continue
+
                     gidx_ = name2gidx(layer.name, l2g_, inv_groups_) # gidx on current model
-                    residual_removal[layer.name] = None
                     if len(sharing_groups_[gidx_][0]) > 1:
                         score = cscore[gidx_] # copied + sharing + non-residual-conv
                     else:
@@ -1125,6 +1219,8 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
 
                     if np.sum(gates) < min_channels:
                         continue
+
+                    #print("+", min_idx, min_val, layer.name, np.sum(gates))
 
                     min_val_, min_idx_ = find_min(
                         score,
@@ -1141,19 +1237,18 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
             if min_val != -1:
                 layer_name = model.layers[min_idx[0]].name
                 gidx_ = name2gidx(layer_name, l2g_, inv_groups_)
+                #print(sharing_groups_[gidx_], layer_name)
                 for name in sharing_groups_[gidx_][0]:
                     if model.get_layer(name).__class__.__name__ in ["Conv2D", "Dense", "MultiHeadAttention"]:
                         if name in last_:
                             continue
                         gates = gates_info[name]
+                        #print("++", min_idx, min_val, name, np.sum(gates))
                         gates[min_idx[1]] = 0.0
 
-        dump_model = model
-         
         continue_info = None
 
-        temp_gmodel, temp_parser, _, _ = get_gmodel(dataset, dump_model, model_handler, gates_info)
-        ccmodel = temp_parser.cut(temp_gmodel)
+        ccmodel = parser_.cut(gmodel)
 
         if reg_factor > 0.0:
             ccmodel = remove_regularizer_if_one(ccmodel, is_masked_func=is_masked_func, mode=reg_mode, custom_objects=parser.custom_objects)
@@ -1237,8 +1332,7 @@ def parse(model, parser, model_type="efnet"):
                 elif (left.__class__.__name__ == "BatchNormalization" and right.__class__.__name__ == "BatchNormalization" and "resnet" in model_type): # Resnet
                     if group is not None:
                         group = None
-                elif (left.__class__.__name__ != "Add" and right.__class__.__name__ != "Add"): # start group
-                    if group is None or len(group) > max_len:
+                elif (left.__class__.__name__ != "Add" and right.__class__.__name__ != "Add") or group is None or len(group) > max_len: # start group
                         group = [] # assign new group
                         groups.append(group)
 
@@ -1249,6 +1343,7 @@ def parse(model, parser, model_type="efnet"):
             if group is not None and not pass_:
                 group.append((layer["name"], parser.torder[layer["name"]], pair))
 
+    group = groups[-1]
     if last_add != group[-1][0]:
         group.append((last_add, parser.torder[last_add], pair))
 
@@ -1259,7 +1354,7 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
     model = change_dtype(model, "float32", custom_objects=custom_objects)
     tf.keras.utils.plot_model(model, "omodel.pdf", show_shapes=True)
 
-    global num_masks, pick_ratio, window_size, num_remove, min_channels, droprate, pre_epochs, pruning_masked_only, num_hold
+    global num_masks, pick_ratio, window_size, num_remove, min_channels, droprate, pre_epochs, pruning_masked_only, num_hold, config_path
     gidx = -1
     idx = -1
     if os.path.exists("config.yaml"):
@@ -1268,6 +1363,8 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
                 config = yaml.safe_load(stream)
             except yaml.YAMLError as exc:
                 print(exc)
+
+        config_path = config["config_path"]
 
         num_rep = config["num_rep"]
         num_masks_ = config["num_masks"]
@@ -1346,6 +1443,8 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
             masknn.append(submask)
         masksnn.append(masknn)
 
+    print(len(masksnn))
+
     for _ in range(num_rep):
         
         if indices == "base":
@@ -1368,7 +1467,13 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
                             print(num_masks, pick_ratio, min_channels, droprate, pre_epochs, num_rep, indices)
                             if type(indices) == list:
 
-                                for gidx, idx in indices:
+                                for tup_ in indices:
+                                    if len(tup_) == 3:
+                                        gidx, idx, iidx = tup_
+                                        masksnn[gidx][idx][iidx] = 1
+                                    else:
+                                        gidx, idx = tup_
+                                        iidx = None
                                     masksnn[gidx][idx][idx] = 0 # masking
                                     masks[gidx][idx] = 0
 
@@ -1379,7 +1484,13 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
                                 sub_path = "masking_targeted_%d_%f_%d_%f_%d_indices" % (_, pick_ratio, min_channels, droprate, pre_epochs)
                                 cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=num_iters, gmode=gmode, dataset=dataset, sub_path=sub_path, masking=masking, custom_objects=custom_objects)
 
-                                for gidx, idx in indices:
+                                for tup_ in indices:
+                                    if len(tup_) == 3:
+                                        gidx, idx, iidx = tup_
+                                        masksnn[gidx][idx][iidx] = 0
+                                    else:
+                                        gidx, idx = tup_
+                                        iidx = None
                                     masksnn[gidx][idx][idx] = 1 # restore
                                     masks[gidx][idx] = 1
 
