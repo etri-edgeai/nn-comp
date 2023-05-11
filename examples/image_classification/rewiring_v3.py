@@ -1248,7 +1248,9 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
 
         continue_info = None
 
-        ccmodel = parser_.cut(gmodel)
+        dump_model = model
+        temp_gmodel, temp_parser, _, _ = get_gmodel(dataset, dump_model, model_handler, gates_info)
+        ccmodel = temp_parser.cut(temp_gmodel)
 
         if reg_factor > 0.0:
             ccmodel = remove_regularizer_if_one(ccmodel, is_masked_func=is_masked_func, mode=reg_mode, custom_objects=parser.custom_objects)
