@@ -18,4 +18,4 @@ reg_opt: "Custom/ortho"
 reg_mode: "masked"
 reg_dim_mode: "rows"
 config_path: "../config/cifar100p.yaml"
-dropblock: true
+dropblock: false
