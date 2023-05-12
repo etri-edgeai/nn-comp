@@ -55,7 +55,7 @@ from curl import apply_curl
 from hrank import apply_hrank
 from l2 import apply_l2prune
 from rewiring_v3 import apply_rewiring
-from quant import apply_quantize
+#from quant import apply_quantize
 from group_fisher import make_group_fisher, add_gates, prune_step, compute_positions, flatten
 from loader import get_model_handler
 
@@ -623,6 +623,7 @@ def run():
     parser.add_argument('--period', type=int, default=25, help='model')
     parser.add_argument('--min_steps', type=int, default=-1, help='model')
     parser.add_argument('--lr_mode', type=int, default=0, help='model')
+    parser.add_argument('--droprate', type=float, default=0, help='model')
     parser.add_argument('--target_ratio', type=float, default=0.5, help='model')
     parser.add_argument('--save_steps', type=int, default=-1, help='model')
     parser.add_argument('--log_file', type=str, default=None, help="method")
@@ -837,11 +838,11 @@ def run():
             print(model)
             model = change_dtype(model, mixed_precision.global_policy(), custom_objects=custom_object_scope, distill_set=position_set)
 
-        """
-        for layer in model.layers:
-            if layer.__class__.__name__ == "DropPath":
-                layer.drop_path_prob = 1.0
-        """
+        if args.droprate > 0:
+            print("droprate is changed to ", args.droprate)
+            for layer in model.layers:
+                if layer.__class__.__name__ == "DropPath":
+                    layer.drop_path_prob = args.droprate
 
         if args.model_path2 is not None or args.distillation:
             print("distillation!")
