@@ -1011,7 +1011,7 @@ def remove_group(model, parser, groups, masks):
     model_ = tf.keras.models.model_from_json(model_json, custom_objects=custom_objects)
     return model_
 
-def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func, num_iters=100, gmode=False, dataset="imagenet2012", sub_path=None, masking=None, custom_objects=None):
+def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func, num_iters=100, gmode=False, dataset="imagenet2012", sub_path=None, masking=None, custom_objects=None, greedy_filter=None):
 
     if sub_path is not None:
         save_path_ = os.path.join(save_path, sub_path)
@@ -1073,7 +1073,18 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
 
                     if (gidx, idx) in mask_history:
                         continue
-                    
+                   
+                    if greedy_filter is not None:
+                        if greedy_filter == "first":
+                            if idx != 0 and masks[gidx][idx-1] != 0:
+                                continue
+                        elif greedy_filter == "last":
+                            idx = len(mask)-1 - idx
+                            if idx != len(mask)-1 and masks[gidx][idx+1] != 0:
+                                continue
+                        else:
+                            pass
+
                     masksnn[gidx][idx][idx] = 0 # masking
                     masks[gidx][idx] = 0
 
@@ -1118,7 +1129,7 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
 
                     gate = test_gmodel.get_layer(test_pc.l2g[groups[gidx][idx][2][0][0]])
                     num_gates = gate.gates.shape[0]
-                    gate.gates.assign(np.zeros(num_gates,))
+                    gate.gates.assign(np.ones(num_gates,))
 
                     print(target)
                     print(gate.name)
@@ -1561,10 +1572,17 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
                                     masksnn[gidx][idx][idx] = 1 # restore
                                     masks[gidx][idx] = 1
 
-                            elif indices == "greedy":
+                            elif "greedy" in indices:
+
+                                if "first" in indices:
+                                    greedy_filter = "first"
+                                elif "last" in indices:
+                                    greedy_filter = "last"
+                                else:
+                                    greedy_filter = None
 
                                 sub_path = "masking_%d_%d_%f_%d_greedy_%f_%d" % (_, num_masks, pick_ratio, min_channels, droprate, pre_epochs)
-                                cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=num_iters, gmode=gmode, dataset=dataset, sub_path=sub_path, custom_objects=custom_objects)
+                                cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=num_iters, gmode=gmode, dataset=dataset, sub_path=sub_path, custom_objects=custom_objects, greedy_filter=greedy_filter)
 
                             else:
 
