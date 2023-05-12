@@ -31,6 +31,7 @@ from prep import add_augmentation, change_dtype
 from train import iteration_based_train, train_step, load_dataset, train
 from rewiring import decode, get_add_inputs, replace_input
 from loader import get_model_handler
+from curl import apply_curl
 
 import reg as reg_
 from utils import optimizer_factory
@@ -51,6 +52,7 @@ pre_epochs = 0
 min_channels = 2 # min channels + 1
 pruning_masked_only = False
 reg_factor = 0.0
+pruning_method = "gfp"
 reg_opt = "Custom/ortho"
 reg_mode = "masked"
 reg_dim_mode = "rows"
@@ -1221,6 +1223,19 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
         (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
         model.evaluate(test_data_gen, verbose=1)[1]
 
+    if pruning_method == "curl":
+
+        if dataset == "imagenet2012":
+            n_classes = 1000
+        else:
+            n_classes = 100
+
+        gates_info = {}
+        gmodel, parser, ordered_groups, pc = get_gmodel(dataset, model, model_handler, gates_info=gates_info)
+        (train_data_gen, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
+        apply_curl(train_data_gen, model, gmodel, ordered_groups, pc.l2g, parser, 0.7, save_path_, model_handler.get_name()+"_curl", save_steps=200)
+        return None
+
     gates_info = {}
     removed_layers = set()
     recon_mode = True
@@ -1231,8 +1246,6 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
         # conduct pruning
         (cscore, grads, raw_grads), continue_info, temp_output = prune(dataset, model, model_handler, target_ratio=0.5, continue_info=continue_info, gates_info=gates_info, dump=False)
         gmodel, l2g_, inv_groups_, sharing_groups_, parser_, pc_ = continue_info # sharing groups (different from `groups`)
-
-        tf.keras.utils.plot_model(gmodel, "ggggmodel.pdf")
 
         last_ = parser_.get_last_transformers()
 
@@ -1279,10 +1292,7 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
                         continue
 
                     gidx_ = name2gidx(layer.name, l2g_, inv_groups_) # gidx on current model
-                    if len(sharing_groups_[gidx_][0]) > 1:
-                        score = cscore[gidx_] # copied + sharing + non-residual-conv
-                    else:
-                        score = grads[layer.name].numpy() # TODO:check
+                    score = cscore[gidx_] # copied + sharing + non-residual-conv
 
                     if layer.name not in gates_info: # copied + sharing case
                         gates_info[layer.name] = gmodel.get_layer(l2g_[layer.name]).gates.numpy()
@@ -1430,7 +1440,7 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
     model = change_dtype(model, "float32", custom_objects=custom_objects)
     tf.keras.utils.plot_model(model, "omodel.pdf", show_shapes=True)
 
-    global num_masks, pick_ratio, window_size, num_remove, min_channels, droprate, pre_epochs, pruning_masked_only, num_hold, config_path, dropblock
+    global num_masks, pick_ratio, window_size, num_remove, min_channels, droprate, pre_epochs, pruning_masked_only, num_hold, config_path, dropblock, pruning_method
     gidx = -1
     idx = -1
     if os.path.exists("config.yaml"):
@@ -1472,6 +1482,9 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
 
         indices = config["indices"]
         num_iters = config["num_iters"]
+
+        if "pruning_method" in config:
+            pruning_method = config["pruning_method"]
 
         pruning_masked_only = config["pruning_masked_only"]
 
