@@ -129,7 +129,7 @@ def load_dataset(dataset, model_handler, sampling_ratio=1.0, training_augment=Tr
 
 
 
-def train(dataset, model, model_name, model_handler, run_eagerly=False, callbacks=None, is_training=True, augment=True, exclude_val=False, save_dir=None, n_classes=100, conf=None, epochs_=None, sampling_ratio=1.0):
+def train(dataset, model, model_name, model_handler, run_eagerly=False, callbacks=None, is_training=True, augment=True, exclude_val=False, save_dir=None, n_classes=100, conf=None, epochs_=None, sampling_ratio=1.0, save_all=False, use_unique_name=False):
 
     import horovod.tensorflow.keras as hvd_
 
@@ -223,7 +223,10 @@ def train(dataset, model, model_name, model_handler, run_eagerly=False, callback
     print(model.count_params())
 
     if save_dir is not None and hvd_.local_rank() == 0:
-        model_name_ = '%s_model.{epoch:03d}.h5' % (model_name+"_"+dataset)
+        if use_unique_name:
+            model_name_ = '%s_model.best.h5' % (model_name+"_"+dataset)
+        else:
+            model_name_ = '%s_model.{epoch:03d}.h5' % (model_name+"_"+dataset)
         if not os.path.isdir(save_dir):
             os.makedirs(save_dir)
         filepath = os.path.join(save_dir, model_name_)
@@ -233,7 +236,7 @@ def train(dataset, model, model_name, model_handler, run_eagerly=False, callback
                                           filepath=filepath,
                                           monitor="val_accuracy",
                                           verbose=1,
-                                          save_best_only=True,
+                                          save_best_only=not save_all,
                                           save_weights_only=False,
                                           mode="auto",
                                           save_freq="epoch")
