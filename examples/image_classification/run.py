@@ -695,7 +695,6 @@ def run():
         tf.keras.utils.plot_model(model, "tested_model.pdf", expand_nested=True)
         model_handler.compile(model, run_eagerly=False)
         (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
-        #acc = model.evaluate(test_data_gen, verbose=1)[1]
 
         from keras_flops import get_flops
         flops = get_flops(model, batch_size=1)
@@ -704,11 +703,15 @@ def run():
 
         from profile import measure
 
+        tf.keras.backend.set_floatx("float32")
+        model = change_dtype(model, "float32", custom_objects=custom_object_scope, distill_set=None)
+        model_handler.compile(model, run_eagerly=False)
+
         x = measure(model, "onnx_cpu")
         print(x)
 
         tf.keras.utils.plot_model(model, "test.pdf", show_shapes=True)
- 
+        acc = model.evaluate(test_data_gen, verbose=1)[1]
 
     elif args.mode == "cut":
         model = model_path_based_load(args.dataset, args.model_path, model_handler)
