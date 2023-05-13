@@ -17,6 +17,8 @@ def get_shape(dataset):
     return (height, width, 3) # network input
 
 def get_batch_size(dataset):
+    if dataset == "imagenet2012":
+        return batch_size * 2
     return batch_size
 
 def get_name():
