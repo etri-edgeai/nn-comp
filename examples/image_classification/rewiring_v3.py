@@ -604,8 +604,8 @@ def select_submodel(
     else:
         for pick in range(num_picks):
 
-            min_val = None
-            min_iidx = -1
+            max_val = None
+            max_iidx = -1
             for iidx in range(len(mask)+1):
                 if iidx <= idx:
                     continue
@@ -664,6 +664,7 @@ def select_submodel(
                 (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
                 value = model_.evaluate(test_data_gen, verbose=1)[1]
 
+                """
                 gmodel_ = get_gmodel(dataset, model_, model_handler, gates_info=gates_info)[0]
                 sum_ = 0
                 for data, y in data_holder:
@@ -671,19 +672,20 @@ def select_submodel(
                     sum_ += tf.keras.metrics.kl_divergence(y, output2)
                 sum_ /= len(data_holder)
                 sum_ = np.average(sum_)
-                print(iidx, sum_)
-                if min_val is None or sum_ < min_val:
-                    min_val = sum_
-                    min_iidx = iidx
+                """
+                print(iidx, value)
+                if max_val is None or value > max_val:
+                    max_val = value
+                    max_iidx = iidx
 
-            if min_val is None: # one case.
+            if max_val is None: # one case.
                 break
 
-            if min_iidx != -1:
-                print(min_iidx, " is selected...")
-                submask[min_iidx] = 1
+            if max_iidx != -1:
+                print(max_iidx, " is selected...")
+                submask[max_iidx] = 1
             else:
-                print("min_iidx is -1.")
+                print("max_iidx is -1.")
 
 def create_submodel(gidx, idx, mask, submask, groups, first_masked_idx, num_flow, olayer_dict, layer_dict, parser, conn_to, tidx, new_add=None):
 
