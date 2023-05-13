@@ -2,6 +2,7 @@ import math
 import json
 import os
 import copy
+import shutil
 
 import yaml
 import tensorflow as tf
@@ -24,6 +25,9 @@ from nncompress.backend.tensorflow_.transformation.pruning_parser import Pruning
 from nncompress import backend as M
 from group_fisher import make_group_fisher, add_gates, compute_positions, flatten
 
+from scipy import spatial
+from scipy import stats
+
 import random
 
 from prep import add_augmentation, change_dtype
@@ -31,6 +35,7 @@ from prep import add_augmentation, change_dtype
 from train import iteration_based_train, train_step, load_dataset, train
 from rewiring import decode, get_add_inputs, replace_input
 from loader import get_model_handler
+from curl import apply_curl
 
 import reg as reg_
 from utils import optimizer_factory
@@ -51,6 +56,7 @@ pre_epochs = 0
 min_channels = 2 # min channels + 1
 pruning_masked_only = False
 reg_factor = 0.0
+pruning_method = "gfp"
 reg_opt = "Custom/ortho"
 reg_mode = "masked"
 reg_dim_mode = "rows"
@@ -111,10 +117,12 @@ def pretrain_(model_path, model_name, config_path_, epochs=1, lr=0.1):
     model = change_dtype(model, "float64", custom_objects=custom_object_scope)
 
     config["mode"] = "finetune"
-    train(config["dataset"], model, model_handler.get_name()+"ooo", model_handler, n_classes=config["num_classes"], save_dir=None, conf=config, epochs_=epochs, sampling_ratio=config["sampling_ratio"])
+    train(config["dataset"], model, model_handler.get_name()+"ooo", model_handler, n_classes=config["num_classes"], save_dir=dirname, conf=config, epochs_=epochs, sampling_ratio=config["sampling_ratio"], save_all=False, use_unique_name=True)
+
 
     if hvd.size() > 1 and hvd.local_rank() == 0:
-        tf.keras.models.save_model(model, dirname+"/finetuned_studentignore.h5")
+        model_path = dirname+"/"+model_handler.get_name()+"ooo_"+config["dataset"]+"_model.best.h5"
+        shutil.copy(model_path, dirname+"/output.h5")
 
 def pretrain(model, epochs, model_handler):
 
@@ -126,14 +134,19 @@ def pretrain(model, epochs, model_handler):
 
     horovod.run(pretrain_, (os.path.join(dirpath, 'model.h5'), model_handler.get_name(), config_path, epochs), np=len(tf.config.list_physical_devices('GPU'))-1, use_mpi=True)
 
-    if not os.path.exists(os.path.join(dirpath, f"finetuned_studentignore.h5")):
+    model_path = dirpath+"/output.h5"
+    if not os.path.exists(model_path):
         raise Exception("err")
     else:
         # load and transfer model.
-        ret_model = tf.keras.models.load_model(os.path.join(dirpath, f"finetuned_studentignore.h5"), custom_objects=custom_object_scope)
+        ret_model = tf.keras.models.load_model(model_path, custom_objects=custom_object_scope)
+        """
+        model = ret_model
         for layer in model.layers:
             if len(layer.get_weights()) > 0:
                 layer.set_weights(ret_model.get_layer(layer.name).get_weights())
+        """
+    return ret_model
 
 @njit
 def find_min(cscore, gates, min_val, min_idx, lidx, ncol):
@@ -973,9 +986,7 @@ def remove_group(model, parser, groups, masks):
         for idx, (g, m) in enumerate(zip(group, mask)):
             if m == 0:
                 left = g[2][0][1]
-                left_ = g[2][0][0]
                 right = g[2][1][1]
-                right_ = g[2][1][0]
                 if left > right:
                     temp = right
                     right = left
@@ -1011,18 +1022,29 @@ def remove_group(model, parser, groups, masks):
     model_ = tf.keras.models.model_from_json(model_json, custom_objects=custom_objects)
     return model_
 
+def get_left_right(g):
+    
+    left = g[2][0][1]
+    left_ = g[2][0][0]
+    right = g[2][1][1]
+    right_ = g[2][1][0]
+    if left > right:
+        temp = right
+        right = left
+        left = temp
+
+        temp = right_
+        right_ = left_
+        left_ = temp
+
+    return left_, right_
+
 def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func, num_iters=100, gmode=False, dataset="imagenet2012", sub_path=None, masking=None, custom_objects=None, greedy_filter=None):
 
     if sub_path is not None:
         save_path_ = os.path.join(save_path, sub_path)
         if not os.path.exists(save_path_):
             os.mkdir(save_path_)
-
-    parsers = [
-        PruningNNParser(subnet, custom_objects=custom_objects) for subnet in subnets
-    ]
-    for p in parsers:
-        p.parse()
 
     affecting_layers = parser.get_affecting_layers()
     model_backup = model
@@ -1062,92 +1084,168 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
     test_model = model
     mask_history = set()
     if masking is None:
+
         for _ in range(num_masks):
             
-            max_value = 0
-            max_mask = None
-            max_pair = None
-            for gidx, mask in enumerate(masks):
+            if greedy_filter is not None and greedy_filter == "score":
 
-                for idx, v in enumerate(mask):
+                # compute score
+                (_, _grads, _raw_grads), info, _ = prune(dataset, test_model, model_handler, target_ratio=0.5, continue_info=None, gates_info={}, dump=False)
+                _, l2g_, inv_groups_, sharing_groups_, _, _ = info # sharing groups (different from `groups`)
 
-                    if (gidx, idx) in mask_history:
-                        continue
-                   
-                    if greedy_filter is not None:
-                        if greedy_filter == "first":
-                            if idx != 0 and masks[gidx][idx-1] != 0:
+                max_value = 0
+                max_mask = None
+                for gidx, (group, mask) in enumerate(zip(groups, masks)):
+
+                    for idx, (g, m) in enumerate(zip(group, mask)):
+                        if masks[gidx][idx] == 0:
+                            continue
+
+                        print(gidx, idx)
+                        left_, right_ = get_left_right(g)
+                        target = right_
+
+                        sgidx = name2gidx(target, l2g_, inv_groups_)
+                        if len(sharing_groups_[sgidx][0]) == 1:
+                            continue
+
+                        dist_ = 0
+                        for layer_name in sharing_groups_[sgidx][0]:
+                            if l2g_[layer_name] == l2g_[target]: # same gate
                                 continue
-                        elif greedy_filter == "last":
-                            idx = len(mask)-1 - idx
-                            if idx != len(mask)-1 and masks[gidx][idx+1] != 0:
-                                continue
-                        else:
-                            pass
 
-                    masksnn[gidx][idx][idx] = 0 # masking
-                    masks[gidx][idx] = 0
+                            dist__ = 1 - spatial.distance.correlation(_grads[target].numpy().argsort(), _grads[layer_name].numpy().argsort())
+                            #dist__ = 1 - stats.kendalltau(_grads[target].numpy().argsort(), _grads[layer_name].numpy().argsort()).correlation
+                            dist_ += dist__
+                            print(dist__, target, layer_name)
 
-                    masksnn_ = copy.deepcopy(masksnn)
-                    masks_ = copy.deepcopy(masks)
+                        print(dist_)
+                        dist_ = dist_ / (len(sharing_groups_[sgidx][0])-1) 
+                        print(dist_)
 
-                    select_submodel(
-                        model_backup,
-                        model,
-                        model_handler,
-                        dataset,
-                        gates_info,
-                        gidx,
-                        idx,
-                        masksnn_,
-                        groups,
-                        parser,
-                        data_holder)
+                        if max_mask is None or dist_ > max_value:
+                            max_value = dist_
+                            max_mask = (gidx, idx)
 
-                    test_model = remove_skip_edge(model_backup, model, parser, groups, masksnn_)
+                print("MAX DIST:", max_value)
+                assert max_mask is not None
+                gidx, idx = max_mask
+                masksnn[gidx][idx][idx] = 0 # masking
+                masks[gidx][idx] = 0
 
-                    tf.keras.utils.plot_model(test_model, "temp_test_model.pdf", show_shapes=True)
+                select_submodel(
+                    model_backup,
+                    model,
+                    model_handler,
+                    dataset,
+                    gates_info,
+                    gidx,
+                    idx,
+                    masksnn,
+                    groups,
+                    parser,
+                    data_holder)
 
-                    target = None
-                    for layer in test_model.layers:
-                        if len(layer.get_weights()) > 0:
-                            if "copied" in layer.name:
-                                w = model.get_layer(cname2name(layer.name)).get_weights()
-                                if layer.__class__.__name__ == "Conv2D":
-                                    w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
-                                if len(layer.get_weights()) == len(w):
-                                    layer.set_weights(w)
-                                else:
-                                    layer.set_weights([w[0]])
-                            else:
-                                layer.set_weights(model.get_layer(layer.name).get_weights())
+                test_model = remove_skip_edge(model_backup, model, parser, groups, masksnn)
 
+                for layer in test_model.layers:
+                    if len(layer.get_weights()) > 0:
                         if "copied" in layer.name:
-                            target = layer.name
-                    
-                    test_gmodel, test_parser, _, test_pc = get_gmodel(dataset, test_model, model_handler, gates_info=gates_info)
+                            w = model.get_layer(cname2name(layer.name)).get_weights()
+                            if layer.__class__.__name__ == "Conv2D":
+                                w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
+                            if len(layer.get_weights()) == len(w):
+                                layer.set_weights(w)
+                            else:
+                                layer.set_weights([w[0]])
+                        else:
+                            layer.set_weights(model.get_layer(layer.name).get_weights())
+                            
+            else:
+                max_value = 0
+                max_mask = None
+                max_pair = None
+                for gidx, mask in enumerate(masks):
 
-                    gate = test_gmodel.get_layer(test_pc.l2g[groups[gidx][idx][2][0][0]])
-                    num_gates = gate.gates.shape[0]
-                    gate.gates.assign(np.ones(num_gates,))
+                    for idx, v in enumerate(mask):
 
-                    print(target)
-                    print(gate.name)
-                    model_handler.compile(test_gmodel, run_eagerly=False)
-                    (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=100)
-                    value = test_gmodel.evaluate(test_data_gen, verbose=1)[1]
-                    print(value)
-                    if max_mask is None or value > max_value:
-                        max_value = value
-                        max_mask = (gidx, idx)
-                        max_pair = (masks_, masksnn_)
+                        if (gidx, idx) in mask_history:
+                            continue
+                       
+                        if greedy_filter is not None:
+                            if greedy_filter == "first":
+                                if idx != 0 and masks[gidx][idx-1] != 0:
+                                    continue
+                            elif greedy_filter == "last":
+                                idx = len(mask)-1 - idx
+                                if idx != len(mask)-1 and masks[gidx][idx+1] != 0:
+                                    continue
+                            else:
+                                pass
 
-                    masksnn[gidx][idx][idx] = 1 # restore
-                    masks[gidx][idx] = 1
+                        masksnn[gidx][idx][idx] = 0 # masking
+                        masks[gidx][idx] = 0
 
-            assert max_mask is not None
-            masks, masksnn = max_pair
-            mask_history.add(max_mask)
+                        masksnn_ = copy.deepcopy(masksnn)
+                        masks_ = copy.deepcopy(masks)
+
+                        select_submodel(
+                            model_backup,
+                            model,
+                            model_handler,
+                            dataset,
+                            gates_info,
+                            gidx,
+                            idx,
+                            masksnn_,
+                            groups,
+                            parser,
+                            data_holder)
+
+                        test_model = remove_skip_edge(model_backup, model, parser, groups, masksnn_)
+
+                        tf.keras.utils.plot_model(test_model, "temp_test_model.pdf", show_shapes=True)
+
+                        target = None
+                        for layer in test_model.layers:
+                            if len(layer.get_weights()) > 0:
+                                if "copied" in layer.name:
+                                    w = model.get_layer(cname2name(layer.name)).get_weights()
+                                    if layer.__class__.__name__ == "Conv2D":
+                                        w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
+                                    if len(layer.get_weights()) == len(w):
+                                        layer.set_weights(w)
+                                    else:
+                                        layer.set_weights([w[0]])
+                                else:
+                                    layer.set_weights(model.get_layer(layer.name).get_weights())
+
+                            if "copied" in layer.name:
+                                target = layer.name
+                        
+                        test_gmodel, test_parser, _, test_pc = get_gmodel(dataset, test_model, model_handler, gates_info=gates_info)
+
+                        gate = test_gmodel.get_layer(test_pc.l2g[groups[gidx][idx][2][0][0]])
+                        num_gates = gate.gates.shape[0]
+                        gate.gates.assign(np.ones(num_gates,))
+
+                        print(target)
+                        print(gate.name)
+                        model_handler.compile(test_gmodel, run_eagerly=False)
+                        (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=100)
+                        value = test_gmodel.evaluate(test_data_gen, verbose=1)[1]
+                        print(value)
+                        if max_mask is None or value > max_value:
+                            max_value = value
+                            max_mask = (gidx, idx)
+                            max_pair = (masks_, masksnn_)
+
+                        masksnn[gidx][idx][idx] = 1 # restore
+                        masks[gidx][idx] = 1
+
+                assert max_mask is not None
+                masks, masksnn = max_pair
+                mask_history.add(max_mask)
     else:
         masks, masksnn = masking
 
@@ -1193,7 +1291,7 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
                 else:
                     layer.set_weights(model.get_layer(layer.name).get_weights())
 
-        model = test_model
+    model = test_model
 
     """
     model_handler.compile(model, run_eagerly=False)
@@ -1211,7 +1309,7 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
 
     if pre_epochs > 0:
         #train_func(model, pre_epochs, None)
-        pretrain(model, pre_epochs, model_handler)
+        model = pretrain(model, pre_epochs, model_handler)
 
         model_handler.compile(model, run_eagerly=False)
         if dataset == "imagenet2012":
@@ -1220,6 +1318,19 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
             n_classes = 100
         (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
         model.evaluate(test_data_gen, verbose=1)[1]
+
+    if pruning_method == "curl":
+
+        if dataset == "imagenet2012":
+            n_classes = 1000
+        else:
+            n_classes = 100
+
+        gates_info = {}
+        gmodel, parser, ordered_groups, pc = get_gmodel(dataset, model, model_handler, gates_info=gates_info)
+        (train_data_gen, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
+        apply_curl(train_data_gen, model, gmodel, ordered_groups, pc.l2g, parser, 0.7, save_path_, model_handler.get_name()+"_curl", save_steps=200)
+        return None
 
     gates_info = {}
     removed_layers = set()
@@ -1231,8 +1342,6 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
         # conduct pruning
         (cscore, grads, raw_grads), continue_info, temp_output = prune(dataset, model, model_handler, target_ratio=0.5, continue_info=continue_info, gates_info=gates_info, dump=False)
         gmodel, l2g_, inv_groups_, sharing_groups_, parser_, pc_ = continue_info # sharing groups (different from `groups`)
-
-        tf.keras.utils.plot_model(gmodel, "ggggmodel.pdf")
 
         last_ = parser_.get_last_transformers()
 
@@ -1279,10 +1388,7 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
                         continue
 
                     gidx_ = name2gidx(layer.name, l2g_, inv_groups_) # gidx on current model
-                    if len(sharing_groups_[gidx_][0]) > 1:
-                        score = cscore[gidx_] # copied + sharing + non-residual-conv
-                    else:
-                        score = grads[layer.name].numpy() # TODO:check
+                    score = cscore[gidx_] # copied + sharing + non-residual-conv
 
                     if layer.name not in gates_info: # copied + sharing case
                         gates_info[layer.name] = gmodel.get_layer(l2g_[layer.name]).gates.numpy()
@@ -1293,8 +1399,6 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
 
                     if np.sum(gates) < min_channels:
                         continue
-
-                    #print("+", min_idx, min_val, layer.name, np.sum(gates))
 
                     min_val_, min_idx_ = find_min(
                         score,
@@ -1311,13 +1415,11 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
             if min_val != -1:
                 layer_name = model.layers[min_idx[0]].name
                 gidx_ = name2gidx(layer_name, l2g_, inv_groups_)
-                #print(sharing_groups_[gidx_], layer_name)
                 for name in sharing_groups_[gidx_][0]:
                     if model.get_layer(name).__class__.__name__ in ["Conv2D", "Dense", "MultiHeadAttention"]:
                         if name in last_:
                             continue
                         gates = gates_info[name]
-                        #print("++", min_idx, min_val, name, np.sum(gates))
                         gates[min_idx[1]] = 0.0
 
         continue_info = None
@@ -1430,7 +1532,7 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
     model = change_dtype(model, "float32", custom_objects=custom_objects)
     tf.keras.utils.plot_model(model, "omodel.pdf", show_shapes=True)
 
-    global num_masks, pick_ratio, window_size, num_remove, min_channels, droprate, pre_epochs, pruning_masked_only, num_hold, config_path, dropblock
+    global num_masks, pick_ratio, window_size, num_remove, min_channels, droprate, pre_epochs, pruning_masked_only, num_hold, config_path, dropblock, pruning_method
     gidx = -1
     idx = -1
     if os.path.exists("config.yaml"):
@@ -1473,6 +1575,9 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
         indices = config["indices"]
         num_iters = config["num_iters"]
 
+        if "pruning_method" in config:
+            pruning_method = config["pruning_method"]
+
         pruning_masked_only = config["pruning_masked_only"]
 
     groups = parse(model, parser, model_type)
@@ -1494,9 +1599,11 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
         if len(subnet.inputs) > 1:
             continue
         new_groups.append(g)
+        """
         subnet = change_dtype(subnet, "float32", custom_objects=custom_objects)
         tf.keras.utils.plot_model(subnet, "%d.pdf"%i)
         subnets.append(subnet)
+        """
 
     groups = new_groups
     print(groups)
@@ -1578,6 +1685,8 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
                                     greedy_filter = "first"
                                 elif "last" in indices:
                                     greedy_filter = "last"
+                                elif "score" in indices:
+                                    greedy_filter = "score"
                                 else:
                                     greedy_filter = None
 

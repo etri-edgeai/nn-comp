@@ -60,7 +60,6 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
             for g_ in g:
                 gate = gated_model.get_layer(l2g[g_])
                 gates_weights[l2g[g_]] = gate.gates.numpy()
-                break
         else:
             g_ = flatten(g)
             _, group_struct = parser.get_group_topology(g_)
@@ -139,6 +138,7 @@ def apply_curl(train_data_generator, teacher, gated_model, groups, l2g, parser, 
             for X, ty_output in zip(data, ty):
                 student_logits = gated_model(X, training=False)
                 sum_ += tf.math.reduce_mean(tf.keras.losses.kl_divergence(student_logits[0], ty_output))
+            score[local_base + lidx] = float(sum_)
 
             gate[lidx] = 1.0
             if is_simple_group(g):

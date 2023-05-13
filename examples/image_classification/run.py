@@ -695,6 +695,7 @@ def run():
         tf.keras.utils.plot_model(model, "tested_model.pdf", expand_nested=True)
         model_handler.compile(model, run_eagerly=False)
         (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
+        acc = model.evaluate(test_data_gen, verbose=1)[1]
 
         from keras_flops import get_flops
         flops = get_flops(model, batch_size=1)
