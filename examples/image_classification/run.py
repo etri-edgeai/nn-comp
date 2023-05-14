@@ -869,8 +869,8 @@ def run():
             model = add_augmentation(model, model_handler.width, train_batch_size=model_handler.batch_size, do_mixup=False, do_cutmix=False, custom_objects=custom_object_scope, update_batch_size=True)
             config["mode"] = "finetune"
 
-        tf.keras.backend.set_floatx("float64")
-        model = change_dtype(model, "float64", custom_objects=custom_object_scope, distill_set=position_set)
+        #tf.keras.backend.set_floatx("float64")
+        #model = change_dtype(model, "float64", custom_objects=custom_object_scope, distill_set=position_set)
 
         train(dataset, model, model_handler.get_name()+args.model_prefix, model_handler, run_eagerly=True, n_classes=n_classes, save_dir=save_dir, conf=config, epochs_=args.epochs)
 
