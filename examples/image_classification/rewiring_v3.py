@@ -1749,7 +1749,7 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
                                                     stk.append(curr_)
                                         continue
 
-                                    print("MASKS:")
+                                    print("MASKS: ", cnt)
                                     for gidx_, idx_ in curr:
                                         masksnn[gidx_][idx_][idx_] = 0 # masking
                                         masks[gidx_][idx_] = 0
