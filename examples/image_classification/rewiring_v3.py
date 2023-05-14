@@ -1048,6 +1048,8 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
         if not os.path.exists(save_path_):
             os.mkdir(save_path_)
 
+    shutil.copy("config.yaml", save_path_+"/config.yaml")
+
     affecting_layers = parser.get_affecting_layers()
     model_backup = model
     continue_info = None
@@ -1702,6 +1704,15 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
                                     #if len(mask) <= 1:
                                     #    continue
                                     for idx_, v in enumerate(mask):
+
+                                        if "first" in indices:
+                                            if idx_ != 0:
+                                                continue
+
+                                        elif "last" in indices:
+                                            if idx_ != len(mask)-1:
+                                                continue
+
                                         stk.append([(gidx_, idx_)])
 
                                 cnt = 0
@@ -1711,16 +1722,38 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
                                         for gidx_, mask in enumerate(masks):
                                             #if len(mask) <= 1:
                                             #    continue
-                                            for idx_, v in enumerate(mask_):
+                                            for idx_, v in enumerate(mask):
                                                 if (gidx_, idx_) not in curr:
+                                                    
+                                                    if "first" in indices:
+                                                        flag = False
+                                                        for cgidx, cidx in curr:
+                                                            if idx_ == 0 or (gidx_ == cgidx and cidx-1 == idx_):
+                                                                flag = True
+                                                                break
+                                                        if not flag:
+                                                            continue
+
+                                                    elif "last" in indices:
+
+                                                        flag = False
+                                                        for cgidx, cidx in curr:
+                                                            if idx_ == len(mask)-1 or (gidx_ == cgidx and cidx+1 == idx_):
+                                                                flag = True
+                                                                break
+                                                        if not flag:
+                                                            continue
+
                                                     curr_ = copy.deepcopy(curr)
                                                     curr_.append((gidx_, idx_))
                                                     stk.append(curr_)
                                         continue
 
+                                    print("MASKS:")
                                     for gidx_, idx_ in curr:
                                         masksnn[gidx_][idx_][idx_] = 0 # masking
                                         masks[gidx_][idx_] = 0
+                                        print(gidx_, idx_)
 
                                     masksnn_ = copy.deepcopy(masksnn) # masksnn will be changed in evaluate().
                                     masks_ = copy.deepcopy(masks)
