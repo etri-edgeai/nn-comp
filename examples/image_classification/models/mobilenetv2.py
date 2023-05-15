@@ -45,9 +45,12 @@ def data_preprocess_func(img, shape):
     return img
 
 def model_preprocess_func(img, shape):
+    img = tf.keras.applications.mobilenet.preprocess_input(img)
+    """
     img = tf.keras.applications.imagenet_utils.preprocess_input(
         img, data_format=None, mode='torch'
         )
+    """
     #img = preprocess_input(img)
     return img
 
