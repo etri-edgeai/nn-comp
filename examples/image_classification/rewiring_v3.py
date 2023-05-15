@@ -1236,7 +1236,7 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
                         print(target)
                         print(gate.name)
                         model_handler.compile(test_gmodel, run_eagerly=False)
-                        (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=100)
+                        (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
                         value = test_gmodel.evaluate(test_data_gen, verbose=1)[1]
                         print(value)
                         if max_mask is None or value > max_value:
