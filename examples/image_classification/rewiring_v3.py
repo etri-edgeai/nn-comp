@@ -57,6 +57,7 @@ min_channels = 2 # min channels + 1
 pruning_masked_only = False
 reg_factor = 0.0
 pruning_method = "gfp"
+activation = "relu"
 reg_opt = "Custom/ortho"
 reg_mode = "masked"
 reg_dim_mode = "rows"
@@ -725,11 +726,6 @@ def create_submodel(gidx, idx, mask, submask, groups, first_masked_idx, num_flow
     }
 
     act_dict = act_dict_template
-    for key in layer_dict:
-        if layer_dict[key]["class_name"] == "ReLU": # if the model uses ReLU, then  act_dict is ReLU.
-            act_dict = copy.deepcopy(layer_dict[key])
-            break
-
     for iidx, v in enumerate(submask):
 
         if iidx <= idx:
@@ -750,8 +746,7 @@ def create_submodel(gidx, idx, mask, submask, groups, first_masked_idx, num_flow
             act_dict_ = copy.deepcopy(act_dict)
             act_dict_["name"] = output_name+"_act"
             act_dict_["config"]["name"] = act_dict_["name"]
-            if act_dict["class_name"] != "ReLU":
-                act_dict_["config"]["activation"] = "relu"
+            act_dict_["config"]["activation"] = activation
             act_dict_["inbound_nodes"] = [[[output_name, 0, 0, {}]]]
             subnet.append(act_dict_)
             output_name = act_dict_["name"]
@@ -1541,7 +1536,7 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
     model = change_dtype(model, "float32", custom_objects=custom_objects)
     tf.keras.utils.plot_model(model, "omodel.pdf", show_shapes=True)
 
-    global num_masks, pick_ratio, window_size, num_remove, min_channels, droprate, pre_epochs, pruning_masked_only, num_hold, config_path, dropblock, pruning_method
+    global num_masks, pick_ratio, window_size, num_remove, min_channels, droprate, pre_epochs, pruning_masked_only, num_hold, config_path, dropblock, pruning_method, activation
     gidx = -1
     idx = -1
     if os.path.exists("config.yaml"):
@@ -1586,6 +1581,9 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
 
         if "pruning_method" in config:
             pruning_method = config["pruning_method"]
+
+        if "activation" in config:
+            activation = config["activation"]
 
         pruning_masked_only = config["pruning_masked_only"]
 
