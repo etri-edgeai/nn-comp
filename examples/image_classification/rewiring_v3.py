@@ -1050,6 +1050,11 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
 
     shutil.copy("config.yaml", save_path_+"/config.yaml")
 
+    if dataset == "imagenet2012":
+        n_classes = 1000
+    else:
+        n_classes = 100
+
     affecting_layers = parser.get_affecting_layers()
     model_backup = model
     continue_info = None
