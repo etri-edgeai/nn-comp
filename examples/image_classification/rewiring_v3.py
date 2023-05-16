@@ -61,6 +61,7 @@ activation = "relu"
 reg_opt = "Custom/ortho"
 reg_mode = "masked"
 reg_dim_mode = "rows"
+max_len = 1000
 save_path = "saved_grad_%d" % (window_size)
 dropblock = False
 config_path = None
@@ -1474,7 +1475,6 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
 
 def parse(model, parser, model_type="efnet"):
 
-    max_len = 1000
     model_dict = json.loads(model.to_json())
     groups = []
     group = None
@@ -1536,7 +1536,7 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
     model = change_dtype(model, "float32", custom_objects=custom_objects)
     tf.keras.utils.plot_model(model, "omodel.pdf", show_shapes=True)
 
-    global num_masks, pick_ratio, window_size, num_remove, min_channels, droprate, pre_epochs, pruning_masked_only, num_hold, config_path, dropblock, pruning_method, activation
+    global num_masks, pick_ratio, window_size, num_remove, min_channels, droprate, pre_epochs, pruning_masked_only, num_hold, config_path, dropblock, pruning_method, activation, max_len
     gidx = -1
     idx = -1
     if os.path.exists("config.yaml"):
@@ -1584,6 +1584,9 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
 
         if "activation" in config:
             activation = config["activation"]
+
+        if "max_len" in config:
+            max_len = config["max_len"]
 
         pruning_masked_only = config["pruning_masked_only"]
 
