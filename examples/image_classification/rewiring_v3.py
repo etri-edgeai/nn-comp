@@ -480,10 +480,6 @@ def rewire_copied_body(idx, layers, input_layer, new_input):
         if "name" in layer:
             layer["name"] = str(idx)+"_copied_"+layer["name"]
 
-        if layer["class_name"] == "Conv2D":
-            layer["config"]["kernel_size"] = [1, 1]
-            layer["config"]["use_bias"] = False
-
     for layer in layers:
         inbound = layer["inbound_nodes"]
         if layer["config"]["name"] != str(idx)+"_copied_"+input_layer:
@@ -647,8 +643,6 @@ def select_submodel(
                     if len(layer.get_weights()) > 0:
                         if "copied" in layer.name:
                             w = curr_model.get_layer(cname2name(layer.name)).get_weights()
-                            if layer.__class__.__name__ == "Conv2D":
-                                w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
                             if len(layer.get_weights()) == len(w):
                                 layer.set_weights(w)
                             else:
@@ -912,8 +906,6 @@ def remove_skip_edge(basemodel, curr_model, parser, groups, remove_masks, weight
             try:
                 if "copied_" in layer.name:
                     w = curr_model.get_layer(cname2name(layer.name)).get_weights()
-                    if layer.__class__.__name__ == "Conv2D":
-                        w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
                     if len(layer.get_weights()) == len(w):
                         layer.set_weights(w)
                     else:
@@ -1157,8 +1149,6 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
                     if len(layer.get_weights()) > 0:
                         if "copied" in layer.name:
                             w = model.get_layer(cname2name(layer.name)).get_weights()
-                            if layer.__class__.__name__ == "Conv2D":
-                                w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
                             if len(layer.get_weights()) == len(w):
                                 layer.set_weights(w)
                             else:
@@ -1216,8 +1206,6 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
                             if len(layer.get_weights()) > 0:
                                 if "copied" in layer.name:
                                     w = model.get_layer(cname2name(layer.name)).get_weights()
-                                    if layer.__class__.__name__ == "Conv2D":
-                                        w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
                                     if len(layer.get_weights()) == len(w):
                                         layer.set_weights(w)
                                     else:
@@ -1287,8 +1275,6 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
             if len(layer.get_weights()) > 0:
                 if "copied" in layer.name:
                     w = model.get_layer(cname2name(layer.name)).get_weights()
-                    if layer.__class__.__name__ == "Conv2D":
-                        w[0] = np.expand_dims(np.average(w[0], axis=(0,1)), axis=(0,1))
                     if len(layer.get_weights()) == len(w):
                         layer.set_weights(w)
                     else:
