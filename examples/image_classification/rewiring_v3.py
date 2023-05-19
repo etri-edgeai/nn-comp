@@ -592,6 +592,7 @@ def select_submodel(
     num_picks = max(int(max_picks * pick_ratio), 1)
     assert num_picks >= 1
 
+    last_ = parser.get_last_transformers()
     if num_picks == max_picks:
         print("100% submask")
         for iidx in range(len(mask)+1):
@@ -632,6 +633,27 @@ def select_submodel(
                 if nonlinear:
                     continue
                 """
+
+                if iidx == len(mask):
+
+                    left = groups[gidx][iidx][2][0][1]
+                    right = groups[gidx][iidx][2][1][1]
+                    if left > right:
+                        temp = right
+                        right = left
+                        left = temp
+
+                    flag = False
+                    for layer in basemodel.layers:
+                        if parser.torder[layer.name] > right:
+                            if layer.name in last_:
+                                break
+                            elif layer.__class__.__name__ in  ["Conv2D", "Dense", "MultiHeadAttention"]: # Transform
+                                flag = True # it is between the last group and classifier.
+                    if not flag:
+                        print(last_)
+                        xxx
+                        continue
 
                 submask[iidx] = 1
                 model_ = remove_skip_edge(basemodel, curr_model, parser, groups, remove_masks)
