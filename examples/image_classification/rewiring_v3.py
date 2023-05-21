@@ -636,8 +636,8 @@ def select_submodel(
 
                 if iidx == len(mask):
 
-                    left = groups[gidx][iidx][2][0][1]
-                    right = groups[gidx][iidx][2][1][1]
+                    left = groups[gidx][iidx-1][2][0][1]
+                    right = groups[gidx][iidx-1][2][1][1]
                     if left > right:
                         temp = right
                         right = left
@@ -651,8 +651,7 @@ def select_submodel(
                             elif layer.__class__.__name__ in  ["Conv2D", "Dense", "MultiHeadAttention"]: # Transform
                                 flag = True # it is between the last group and classifier.
                     if not flag:
-                        print(last_)
-                        xxx
+                        print("last %d iidx is skipped." % iidx)
                         continue
 
                 submask[iidx] = 1
@@ -1240,16 +1239,16 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
                         
                         test_gmodel, test_parser, _, test_pc = get_gmodel(dataset, test_model, model_handler, gates_info=gates_info)
 
+                        """            
                         gate = test_gmodel.get_layer(test_pc.l2g[groups[gidx][idx][2][0][0]])
                         num_gates = gate.gates.shape[0]
                         gate.gates.assign(np.ones(num_gates,))
+                        """
 
-                        print(target)
-                        print(gate.name)
                         model_handler.compile(test_gmodel, run_eagerly=False)
                         (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
                         value = test_gmodel.evaluate(test_data_gen, verbose=1)[1]
-                        print(value)
+                        print(value, target)
                         if max_mask is None or value > max_value:
                             max_value = value
                             max_mask = (gidx, idx)
