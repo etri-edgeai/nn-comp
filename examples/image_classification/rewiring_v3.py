@@ -64,6 +64,7 @@ reg_dim_mode = "rows"
 max_len = 1000
 save_path = "saved_grad_%d" % (window_size)
 dropblock = False
+use_zeros = True
 config_path = None
 custom_object_scope = {
     "SimplePruningGate":SimplePruningGate, "StopGradientLayer":StopGradientLayer, "HvdMovingAverage":optimizer_factory.HvdMovingAverage, "Custom/ortho":reg_.OrthoRegularizer
@@ -1239,11 +1240,19 @@ def evaluate(model, model_handler, groups, subnets, parser, datagen, train_func,
                         
                         test_gmodel, test_parser, _, test_pc = get_gmodel(dataset, test_model, model_handler, gates_info=gates_info)
 
-                        """            
-                        gate = test_gmodel.get_layer(test_pc.l2g[groups[gidx][idx][2][0][0]])
-                        num_gates = gate.gates.shape[0]
-                        gate.gates.assign(np.ones(num_gates,))
-                        """
+                        if use_zeros:
+                            left_layer = groups[gidx][idx][2][0][0]
+                            left = groups[gidx][idx][2][0][1]
+                            right_layer = groups[gidx][idx][2][1][0]
+                            right = groups[gidx][idx][2][1][1]
+                            if left > right:
+                                temp = right_layer
+                                right_layer = left_layer
+                                left_layer = temp
+
+                            gate = test_gmodel.get_layer(test_pc.l2g[right_layer])
+                            num_gates = gate.gates.shape[0]
+                            gate.gates.assign(np.zeros(num_gates,))
 
                         model_handler.compile(test_gmodel, run_eagerly=False)
                         (_, _, test_data_gen), (iters, iters_val) = load_dataset(dataset, model_handler, n_classes=n_classes)
@@ -1543,7 +1552,7 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
     model = change_dtype(model, "float32", custom_objects=custom_objects)
     tf.keras.utils.plot_model(model, "omodel.pdf", show_shapes=True)
 
-    global num_masks, pick_ratio, window_size, num_remove, min_channels, droprate, pre_epochs, pruning_masked_only, num_hold, config_path, dropblock, pruning_method, activation, max_len
+    global num_masks, pick_ratio, window_size, num_remove, min_channels, droprate, pre_epochs, pruning_masked_only, num_hold, config_path, dropblock, pruning_method, activation, max_len, use_zeros
     gidx = -1
     idx = -1
     if os.path.exists("config.yaml"):
@@ -1594,6 +1603,9 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
 
         if "max_len" in config:
             max_len = config["max_len"]
+
+        if "use_zeros" in config:
+            use_zeros = config["use_zeros"]
 
         pruning_masked_only = config["pruning_masked_only"]
 
@@ -1776,6 +1788,8 @@ def rewire(datagen, model, model_handler, parser, train_func, gmode=True, model_
                                     cnt += 1
 
                                     cmodel = evaluate(model, model_handler, new_groups, subnets, parser, datagen, train_func, num_iters=num_iters, gmode=gmode, dataset=dataset, sub_path=sub_path, masking=masking, custom_objects=custom_objects)
+
+                                    del cmodel
 
                                     for gidx_, idx_ in curr:
                                         masksnn[gidx_][idx_][idx_] = 1 # restore
