@@ -39,6 +39,9 @@ class SimulatedAnnealingSolver(Solver):
             score = self._score_func(state)
             new_state = state.get_next()
             new_score = self._score_func(new_state)
+            if hasattr(new_state, "report"):
+                new_state.report()
+
             while new_score == 0.0:
                 new_state = state.get_next()
                 new_score = self._score_func(new_state)
