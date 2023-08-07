@@ -352,32 +352,6 @@ class NNParser(object):
 
         return model_dict
 
-    def get_randomwalk(self, start, p=0.25, types=None, min_step=-1):
-
-        trail = []
-        def callback_(n, level):
-            node_data = self._graph.nodes[n]
-            name = node_data["layer_dict"]["config"]["name"]
-            trail.append(name)
-
-        def stop_cond(e, is_edge):
-            if is_edge:
-                return False
-            if min_step != -1 and len(trail) >= min_step:
-                return True
-            curr, level = e
-            if types is not None:
-                if self._model.get_layer(curr).__class__ in types:
-                    if np.random.random() > p:
-                        return True
-                    else:
-                        return False
-            return False
-
-        s = (start, self._graph.nodes(data=True)[start])
-        self.traverse(node_callbacks=[callback_], sources=[s], stopping_condition=stop_cond)
-        return trail
-
 
     def get_joints(self, filter_=None, start=None, min_step=-1):
 
@@ -416,58 +390,6 @@ class NNParser(object):
         else:
             self.traverse(node_callbacks=[callback_], stopping_condition=stop_cond)
         return joints
-
-    def first_common_descendant(self, names, joints, is_transforming=True):
-
-        joints = set(joints)
-        sources = [ x for x in self._graph.nodes(data=True) if x[1]["layer_dict"]["config"]["name"] in names]
-        visits = []
-        for s in sources:
-            v = self.traverse(sources=[s], sync=False)
-            v = [ (v_[0], self.torder[v_[0]]) for v_ in v ]
-            v = sorted(v, key=lambda x: -1*x[1])
-            v.pop() # remove self
-            visits.append(v)
-
-        no_match = False
-        while True:
-            for v in visits:
-                if len(v) == 0:
-                    no_match = True
-                    break
-            if no_match:
-                break
-
-            # find max tidx
-            max_tidx = -1
-            for v in visits:
-                if max_tidx < v[-1][1]:
-                    max_tidx = v[-1][1]
-
-            for v in visits:
-                while v[-1][1] < max_tidx:
-                    v.pop()
-
-            match = True
-            target = visits[0][-1][0]
-            if is_transforming:
-                if not get_handler(self._graph.nodes(data=True)[target]["layer_dict"]["class_name"]).is_transformer(0):
-                    visits[0].pop()
-                    continue
-
-            if target not in joints:
-                visits[0].pop()
-                continue
-
-            for v in visits:
-                if v[-1][0] != target:
-                   match = False
-                   break
-
-            if match:
-                return target
-                
-        return None
 
     def traverse(self,
                  sources=None,

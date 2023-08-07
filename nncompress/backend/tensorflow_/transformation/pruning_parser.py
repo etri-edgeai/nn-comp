@@ -15,7 +15,7 @@ from orderedset import OrderedSet
 
 from nncompress.backend.tensorflow_.transformation.handler import get_handler
 from nncompress.backend.tensorflow_.transformation.parser import NNParser, serialize
-from nncompress.backend.tensorflow_ import DifferentiableGate
+from nncompress.backend.tensorflow_ import SimplePruningGate
 
 class StopGradientLayer(tf.keras.layers.Layer):
     
@@ -37,7 +37,7 @@ class StopGradientLayer(tf.keras.layers.Layer):
         return cls(**config)
 
 class PruningNNParser(NNParser):
-    """NNParser is a tool for enabling differentiable pruning.
+    """NNParser is a tool for enabling channel pruning.
    
     * Caution:
     Since it does not provide any additional loss to achieve target sparsity,
@@ -67,7 +67,7 @@ class PruningNNParser(NNParser):
         self._avoid_pruning = set()
         self._t2g = None
         if gate_class is None:
-            self._gate_class = DifferentiableGate
+            self._gate_class = SimplePruningGate
         else:
             self._gate_class = gate_class
         self._allow_input_pruning = allow_input_pruning
