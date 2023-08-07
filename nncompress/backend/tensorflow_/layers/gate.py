@@ -1,3 +1,7 @@
+""" PruningGate imple.
+
+"""
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -9,6 +13,9 @@ from tensorflow.keras import backend as K
 from nncompress.assets.formula.gate import SimplePruningGateFormula
 
 class SimplePruningGate(layers.Layer, SimplePruningGateFormula):
+    """ Gate class for channel pruning
+
+    """
 
     def __init__(self,
                  ngates,
@@ -44,6 +51,9 @@ class SimplePruningGate(layers.Layer, SimplePruningGateFormula):
         self.data_tracker = data_tracker
 
     def build(self, input_shape):
+        """ Build
+
+        """
         self.gates = self.add_weight(name='gates',
                                      shape=(self.ngates,),
                                      initializer="ones",
@@ -51,12 +61,15 @@ class SimplePruningGate(layers.Layer, SimplePruningGateFormula):
         super(SimplePruningGate, self).build(input_shape)
 
     def call(self, input):
+        """ Call """
         return self.grad_tracker(self.data_tracker(input)), self.binary_selection()
 
     def compute_output_shape(self, input_shape):
+        """ Compute output shape """
         return (input_shape[0], self.ngates)
 
     def get_config(self):
+        """ Get config """
         config = super(SimplePruningGate, self).get_config()
         config.update({
             "ngates":self.ngates

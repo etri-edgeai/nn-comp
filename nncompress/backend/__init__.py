@@ -1,3 +1,5 @@
+""" Backend """
+
 from __future__ import absolute_import
 from __future__ import print_function
 import os
@@ -56,9 +58,6 @@ if 'NNCOMPRESS_BACKEND' in os.environ:
 if _BACKEND == 'tensorflow':
     sys.stderr.write('Using TensorFlow backend\n')
     from .tensorflow_backend import *
-elif _BACKEND == 'torch':
-    sys.stderr.write('Using torch backend.\n')
-    from .torch_backend import *
 else:
     raise ValueError('Unable to import backend : ' + str(_BACKEND))
 

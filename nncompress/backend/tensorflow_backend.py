@@ -1,3 +1,5 @@
+""" Backend functions for TensorFlow """
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -10,6 +12,7 @@ import tensorflow as tf
 from tensorflow.keras import backend as K
 
 def get_type(cls_name):
+    """ Get type """
     from nncompress.backend import tensorflow_
     if hasattr(tensorflow_, cls_name):
         return getattr(tensorflow_, cls_name)
@@ -17,12 +20,14 @@ def get_type(cls_name):
         raise NotImplementedError
 
 def cast(x, dtype=np.float32):
+    """ Type casting """
     if type(dtype) == str:
         return tf.cast(x, dtype=getattr(tf, dtype))
     else:
         return tf.cast(x, dtype=dtype)
 
 def function(func, *args, **kwargs):
+    """ Function wrapper """
     if hasattr(tf, func):
         f = getattr(tf, func)
     elif hassattr(K, func):
@@ -33,33 +38,42 @@ def function(func, *args, **kwargs):
     return f(*args, **kwargs)
 
 def floor(x):
+    """ Floor """
     return tf.math.floor(x)
 
 def round(x):
+    """ Round """
     return tf.math.round(x)
 
 def sum(x):
+    """ Sum """
     return tf.math.reduce_sum(x)
 
 def norm(x, p):
+    """ norm """
     return tf.norm(x, ord=p)
 
 def cmul(data, mask):
+    """ channel-wise mul """
     # N W H C
     if data.dtype != mask.dtype:
         mask = tf.cast(mask, data.dtype)
     return data * mask
 
 def concat(x, y, dim=0):
+    """ concat wrapper """
     return tf.concat([x, y], axis=dim)
 
 def get_out_channel_idx():
+    """ output channel idx """
     return -1
 
 def get_weights(model, layer_name):
+    """ get weights of a layer """
     return model.get_layer(layer_name).get_weights()
 
 def weight_transfer(a, b, exclude=None):
+    """ weight transfer from  a to b """
     if exclude is None:
         exclude = set()
     elif type(exclude) != set:
@@ -69,11 +83,13 @@ def weight_transfer(a, b, exclude=None):
             b.get_layer(layer.name).set_weights(layer.get_weights())
 
 def copy_(model):
+    """ copy model with weights """
     model_ = tf.keras.models.clone_model(model)
     model_.set_weights(model.get_weights())
     return model_
 
 def prune_filter(model, domain, mode="channel", custom_objects=None):
+    """ Pruning Filter """
     from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
     domain = copy.deepcopy(domain)
     if mode == "channel": # it supports `channel_pruning` only now.
@@ -85,6 +101,7 @@ def prune_filter(model, domain, mode="channel", custom_objects=None):
     return domain
 
 def get_sharing_layers(model, target, custom_objects=None):
+    """ Get sharing layers """
     from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
     parser = PruningNNParser(model, custom_objects=custom_objects)
     parser.parse()
@@ -101,6 +118,7 @@ def get_sharing_layers(model, target, custom_objects=None):
         return parser.get_sharing_layers(target)
 
 def get_sharing_groups(model, custom_objects=None):
+    """ Get sharing groups """
     from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
     parser = PruningNNParser(model, custom_objects=custom_objects)
     parser.parse()
@@ -109,12 +127,14 @@ def get_sharing_groups(model, custom_objects=None):
     return parser.get_sharing_groups()
 
 def get_topology(model, custom_objects=None):
+    """ get_topoloogy """ 
     from nncompress.backend.tensorflow_.transformation.parser import NNParser
     parser = NNParser(model, custom_objects)
     parser.parse()
     return parser.get_topology()
 
 def prune(model, masking, mode="channel", custom_objects=None):
+    """ Prune function """
     from nncompress.backend.tensorflow_.transformation.pruning_parser import PruningNNParser
     if mode == "channel":
         parser = PruningNNParser(model, custom_objects=custom_objects)
@@ -160,6 +180,7 @@ def prune(model, masking, mode="channel", custom_objects=None):
     return model, history_
 
 def add_prefix(model, prefix, custom_objects=None, val_check=None, not_change_model_name=False, not_change_input=False):
+    """ add prefix for distillation """
     model_dict = json.loads(model.to_json())
     if not not_change_model_name:
         model_dict["config"]["name"] = prefix + model_dict["config"]["name"]
