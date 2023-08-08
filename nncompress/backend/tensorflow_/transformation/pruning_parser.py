@@ -302,14 +302,14 @@ class PruningNNParser(NNParser):
             for flow_idx, flow in enumerate(layers_dict[dst]["inbound_nodes"]):
                 if type(flow[0]) == str:
                     inbound = flow
-                    if inbound[0] == src and level_change[0] == inbound[1] and
+                    if inbound[0] == src and level_change[0] == inbound[1] and \
                         level_change[1] == flow_idx and tensor_ == inbound[2]:
                         inbound[0] = target[0]["config"]["name"]
                         inbound[1] = target[1]
                         inbound[2] = target[2]
                 else:
                     for inbound in flow:
-                        if inbound[0] == src and level_change[0] == inbound[1] and
+                        if inbound[0] == src and level_change[0] == inbound[1] and \
                             level_change[1] == flow_idx and tensor_ == inbound[2]:
                             inbound[0] = target[0]["config"]["name"]
                             inbound[1] = target[1]
@@ -320,9 +320,9 @@ class PruningNNParser(NNParser):
         act = []
         def act_mapping(n, level):
             node_data = self._graph.nodes(data=True)[n]
-            if node_data["layer_dict"]["class_name"] in ["Activation", "ReLU", "Softmax", "BatchNormalization"] and
+            if node_data["layer_dict"]["class_name"] in ["Activation", "ReLU", "Softmax", "BatchNormalization"] and \
                 len(act) <= 1:
-                if node_data["layer_dict"]["class_name"] == "BatchNormalization" or
+                if node_data["layer_dict"]["class_name"] == "BatchNormalization" or \
                     (not node_data["layer_dict"]["config"]["activation"] == "sigmoid"):
                     act.append(node_data["layer_dict"]["config"]["name"])
         

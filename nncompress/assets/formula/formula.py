@@ -9,20 +9,7 @@ from abc import ABC, abstractmethod
 from nncompress import backend as M
 
 class Formula(ABC):
-
-    @classmethod
-    def instantiate(cls, postfix="", *args, **kwargs):
-        """Instantiate an associated layer according to your backend.
-
-        # Arguments
-            *args: an args tuple.
-            **kwargs: a kwargs dictionary.
-
-        # Returns 
-            An layer(module) instance on the backend.
-
-        """
-        return M.get_type(cls.__name__[0:-7]+postfix)(*args, **kwargs)
+    """ Formula """
 
     @abstractmethod
     def compute(self, *input, training=False):

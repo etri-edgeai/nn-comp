@@ -327,7 +327,7 @@ class NNParser(object):
                         src, dst, level_change, tensor = e[0], e[1], e[2]["level_change"], e[2]["tensor"]
                         for flow_ in layers_dict[dst]["inbound_nodes"]:
                             for inbound in flow_:
-                                if inbound[0] == src and inbound[1] == level_change[0] and inbound[1] == t_flow_idx
+                                if inbound[0] == src and inbound[1] == level_change[0] and inbound[1] == t_flow_idx \
                                     and inbound[2] == tensor and inbound[2] == t_tensor:
                                     inbound[0] = r
                                     inbound[1] = r_flow_idx
