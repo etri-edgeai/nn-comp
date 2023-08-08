@@ -1,3 +1,4 @@
+""" pruning """
 from __future__ import absolute_import
 from __future__ import print_function
 
@@ -8,6 +9,7 @@ from nncompress.search.projection import extract_sample_features
 from nncompress.search.projection import least_square_projection
 
 def cali(model, compressed, masking, handler, nsamples=100, feat_data=None):
+    """ calibration """
     merged_masking = {}
     for layer_name in masking:
         assert masking[layer_name] is not None
@@ -52,6 +54,7 @@ def cali(model, compressed, masking, handler, nsamples=100, feat_data=None):
     least_square_projection(compressed, feat_data, merged_masking)
 
 def _magnitude_based_mask(w, ratio, mode):
+    """ magnitude based masking """
     w = np.abs(w)
     if mode == "channel": # output channel
         sum_ = np.sum(w, axis=tuple([i for i in range(len(w.shape)-1)]))
@@ -131,6 +134,7 @@ def weighted_group_pruning_mask(model, targets, ratio):
     return removal
 
 def prune_filter(model, domain, targets, mode="channel", method="magnitude", sample_inputs=None, custom_objects=None):
+    """ prune filter wrapper """
     return M.prune_filter(model, domain, mode, custom_objects)  
  
 def prune(

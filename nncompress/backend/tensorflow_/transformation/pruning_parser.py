@@ -1,3 +1,4 @@
+""" pruning parser """
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -18,20 +19,24 @@ from nncompress.backend.tensorflow_.transformation.parser import NNParser, seria
 from nncompress.backend.tensorflow_ import SimplePruningGate
 
 class StopGradientLayer(tf.keras.layers.Layer):
+    """ StopGradient Wrapper """
     
     def __init__(self, name=None):
         super(StopGradientLayer, self).__init__(name=name)
 
     def call(self, inputs, training=None):
+        """ call """
         return tf.stop_gradient(inputs)
 
     def get_config(self):
+        """ get config """
         return {
             "name":self.name,
         }
 
     @classmethod
     def from_config(cls, config):
+        """ from config """
         if "dtype" in config:
             config.pop("dtype")
         return cls(**config)
@@ -80,9 +85,11 @@ class PruningNNParser(NNParser):
         self._custom_objects["StopGradientLayer"] = StopGradientLayer
 
     def parse(self):
+        """ parse """
         super(PruningNNParser, self).parse()
 
         def extract(i):
+            """ extraction """
             if type(i) == frozenset and len(i) == 0:
                 return None
 
@@ -316,6 +323,7 @@ class PruningNNParser(NNParser):
                             inbound[2] = target[2]
 
     def get_first_activation(self, node_name):
+        """ get first activation layer after node_name layer """
         
         act = []
         def act_mapping(n, level):
@@ -408,6 +416,7 @@ class PruningNNParser(NNParser):
 
         # Used in traversing
         def modify_output(n, level):
+            """ modify function """
             node_data = self._graph.nodes[n]
             h = get_handler(node_data["layer_dict"]["class_name"])
             if h.is_transformer(0): 
@@ -565,6 +574,7 @@ class PruningNNParser(NNParser):
                 print("%s does not exist, but ignore it." % n)
 
         def cut_weights(n, level):
+            """ slicing weights """
 
             node_data = self._graph.nodes[n]
             h = get_handler(node_data["layer_dict"]["class_name"])
@@ -616,6 +626,7 @@ class PruningNNParser(NNParser):
         return ret
 
     def get_group_topology(self, layer_names=None):
+        """ get group-level topology """
 
         def inspect(g, dict_, sum_=0):
             if type(g) == str:
@@ -668,6 +679,7 @@ class PruningNNParser(NNParser):
    
 
     def cut_by_masking(self, layer_names, masks):
+        """ cut by masking """
         gated_model, gm = p.inject(with_splits=True, with_mapping=True)
 
         for layer in gated_model.layers:

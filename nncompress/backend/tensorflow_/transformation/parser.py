@@ -1,3 +1,4 @@
+""" parser """
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -16,6 +17,7 @@ from orderedset import OrderedSet
 from nncompress.backend.tensorflow_.transformation.handler import get_handler
 
 def serialize(layer):
+    """ serialization """
     layer_dict = tf.keras.layers.serialize(layer)
     layer_dict["name"] = layer.name
     layer_dict["inbound_nodes"] = []
@@ -70,16 +72,19 @@ class NNParser(object):
             self._namespace = namespace
 
     def copy_model(self):
+        """ copy a moedel with weights """
         model = tf.keras.models.clone_model(self._model)
         model.set_weights(self._model.get_weights())
         return model
 
     @property
     def model(self):
+        """ model getter """
         return self._model
 
     @property
     def custom_objects(self):
+        """ return custom objects """
         return self._custom_objects
 
     def get_id(self, prefix):
@@ -120,6 +125,7 @@ class NNParser(object):
         return [(id_, self._graph.nodes[id_]) for id_ in ids]
 
     def get_layer_dict(self, name):
+        """ get layer dict """
         for layer_dict in self._model_dict["config"]["layers"]:
             if layer_dict["config"]["name"] == name:
                 return copy.deepcopy(layer_dict)
@@ -357,6 +363,7 @@ class NNParser(object):
 
 
     def get_joints(self, filter_=None, start=None, min_step=-1):
+        """ get joint layers """
 
         if len(self.torder) != self._graph.number_of_nodes():
             return
@@ -548,6 +555,7 @@ class NNParser(object):
 
 
     def get_leaves(self, block):
+        """ get leaf nodes """
         block_set = set([l.name for l in block])
         input_leaves = []
         output_leaves = []
@@ -576,6 +584,7 @@ class NNParser(object):
 
     def get_subnet(
         self, block, model, in_target_shapes=None, out_target_shapes=None, use_adapter=False, custom_objects=None):
+        """ get a subnet """
         # block: list of names
         block_set = set([l.name for l in block])
         inputs, outputs = self.get_leaves(block)
