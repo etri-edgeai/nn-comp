@@ -712,6 +712,7 @@ class PruningNNParser(NNParser):
 
 
 def has_intersection(i, j):
+    """ compute intersection two hetero items """
     if not type(i) in [list, tuple, OrderedSet, frozenset]:
         i  = (i,)
     if not type(j) in [list, tuple, OrderedSet, frozenset]:
