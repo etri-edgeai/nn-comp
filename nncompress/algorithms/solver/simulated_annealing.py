@@ -66,7 +66,7 @@ class SimulatedAnnealingSolver(Solver):
                 self._best_score = new_score
 
             prob = transition_prob(new_score - score, T)
-            print("[%s] %d iterations, Score:%.4f   New score:%.4f Best score:%.4f  prob:%.4f, output:%s" %\
+            print("[%s] %d iterations, Score:%.4f   New score:%.4f Best score:%.4f  prob:%.4f, output:%s" %
                 (time.ctime(time.time()), i, score, new_score, self._best_score, prob, str(self._best)))
             transition = False
             if prob >= random.random():

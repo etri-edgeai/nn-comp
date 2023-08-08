@@ -179,7 +179,8 @@ def prune(model, masking, mode="channel", custom_objects=None):
             history_[layer] = mask
     return model, history_
 
-def add_prefix(model, prefix, custom_objects=None, val_check=None, not_change_model_name=False, not_change_input=False):
+def add_prefix(
+    model, prefix, custom_objects=None, val_check=None, not_change_model_name=False, not_change_input=False):
     """ add prefix for distillation """
     model_dict = json.loads(model.to_json())
     if not not_change_model_name:

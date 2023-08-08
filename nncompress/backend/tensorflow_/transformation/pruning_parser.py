@@ -61,8 +61,10 @@ class PruningNNParser(NNParser):
     
     """
 
-    def __init__(self, model, basestr="", custom_objects=None, gate_class=None, namespace=None, allow_input_pruning=False):
-        super(PruningNNParser, self).__init__(model, basestr=basestr, custom_objects=custom_objects, namespace=namespace)
+    def __init__(
+        self, model, basestr="", custom_objects=None, gate_class=None, namespace=None, allow_input_pruning=False):
+        super(PruningNNParser, self).__init__(
+            model, basestr=basestr, custom_objects=custom_objects, namespace=namespace)
         self._sharing_groups = []
         self._avoid_pruning = set()
         self._t2g = None
@@ -300,13 +302,15 @@ class PruningNNParser(NNParser):
             for flow_idx, flow in enumerate(layers_dict[dst]["inbound_nodes"]):
                 if type(flow[0]) == str:
                     inbound = flow
-                    if inbound[0] == src and level_change[0] == inbound[1] and level_change[1] == flow_idx and tensor_ == inbound[2]:
+                    if inbound[0] == src and level_change[0] == inbound[1] and
+                        level_change[1] == flow_idx and tensor_ == inbound[2]:
                         inbound[0] = target[0]["config"]["name"]
                         inbound[1] = target[1]
                         inbound[2] = target[2]
                 else:
                     for inbound in flow:
-                        if inbound[0] == src and level_change[0] == inbound[1] and level_change[1] == flow_idx and tensor_ == inbound[2]:
+                        if inbound[0] == src and level_change[0] == inbound[1] and
+                            level_change[1] == flow_idx and tensor_ == inbound[2]:
                             inbound[0] = target[0]["config"]["name"]
                             inbound[1] = target[1]
                             inbound[2] = target[2]
@@ -316,9 +320,10 @@ class PruningNNParser(NNParser):
         act = []
         def act_mapping(n, level):
             node_data = self._graph.nodes(data=True)[n]
-            if node_data["layer_dict"]["class_name"] in ["Activation", "ReLU", "Softmax", "BatchNormalization"] and len(act) <= 1:
-            #if node_data["layer_dict"]["class_name"] in ["Activation", "ReLU", "Softmax"] and len(act) == 0:
-                if node_data["layer_dict"]["class_name"] == "BatchNormalization" or (not node_data["layer_dict"]["config"]["activation"] == "sigmoid"):
+            if node_data["layer_dict"]["class_name"] in ["Activation", "ReLU", "Softmax", "BatchNormalization"] and
+                len(act) <= 1:
+                if node_data["layer_dict"]["class_name"] == "BatchNormalization" or
+                    (not node_data["layer_dict"]["config"]["activation"] == "sigmoid"):
                     act.append(node_data["layer_dict"]["config"]["name"])
         
         def stop(n, is_edge=False):
@@ -397,7 +402,8 @@ class PruningNNParser(NNParser):
                 for i in range(nflow):
                     gate_dict["inbound_nodes"].append([[target, i, 0, {}]])
                     gate_level = len(gate_dict["inbound_nodes"])-1
-                    self._reroute(at=(n["layer_dict"], i, 0), target=(gate_dict, gate_level, 0), layers_dict=layers_dict)
+                    self._reroute(
+                        at=(n["layer_dict"], i, 0), target=(gate_dict, gate_level, 0), layers_dict=layers_dict)
                     gate_mapping[(target, i)] = gate_dict, gate_level
 
         # Used in traversing
@@ -478,7 +484,8 @@ class PruningNNParser(NNParser):
             tensor = 1 if gate_dict["class_name"] == self._gate_class.__name__ else 0
             stop_gradient_dict["inbound_nodes"].append([[gate_dict["name"], gate_level, tensor, {}]])
             modifier_dict["inbound_nodes"].append([[n, level, 0, {}], [stop_gradient.name, 0, 0, {}]])
-            self._reroute(at=(node_data["layer_dict"], level, 0), target=(modifier_dict, 0, 0), layers_dict=layers_dict)
+            self._reroute(
+                at=(node_data["layer_dict"], level, 0), target=(modifier_dict, 0, 0), layers_dict=layers_dict)
 
         # create sub-layers to handle shift op.
         self.traverse(node_callbacks=[modify_output])

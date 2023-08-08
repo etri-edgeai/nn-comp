@@ -133,7 +133,17 @@ def weighted_group_pruning_mask(model, targets, ratio):
 def prune_filter(model, domain, targets, mode="channel", method="magnitude", sample_inputs=None, custom_objects=None):
     return M.prune_filter(model, domain, mode, custom_objects)  
  
-def prune(model, targets, mode="channel", method="magnitude", sample_inputs=None, custom_objects=None, handler=None, calibration=False, nsamples=100, feat_data=None):
+def prune(
+    model,
+    targets,
+    mode="channel",
+    method="magnitude",
+    sample_inputs=None,
+    custom_objects=None,
+    handler=None,
+    calibration=False,
+    nsamples=100,
+    feat_data=None):
     """Compress a model written in tf.Keras. or PyTorch.
 
     For PyTorch, it only supports weight pruning.
@@ -183,7 +193,6 @@ def prune(model, targets, mode="channel", method="magnitude", sample_inputs=None
             else:
                 raise NotImplementedError("%s is not implemented." % method)
 
-        # Even if we only include `target` for channel pruning, the parser will find sharing layers in its internal process.
         masking.append((target, mask))
         if sample_inputs is not None:
             for data in sample_inputs:
